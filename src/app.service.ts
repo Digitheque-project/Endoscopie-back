@@ -41,6 +41,18 @@ export class AppService {
     });
   }
 
+  async getPrescriptionById(id: string) {
+    return this.prisma.prescription.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        medecinPrescripteur: true,
+        dossierCPA: true,
+        checklistAvant: true,
+      },
+    });
+  }
+
   async createPrescription(data: any) {
     return this.prisma.prescription.create({
       data: {

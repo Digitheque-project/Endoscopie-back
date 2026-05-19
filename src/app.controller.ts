@@ -20,6 +20,11 @@ export class AppController {
     return this.appService.getPrescriptions();
   }
 
+  @Get('api/prescriptions/:id')
+  async getPrescriptionById(@Param('id') id: string) {
+    return this.appService.getPrescriptionById(id);
+  }
+
   @Get('api/medecins')
   async getMedecins() {
     return this.appService.getMedecins();
