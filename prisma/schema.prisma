@@ -1,0 +1,141 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Patient {
+  id                   String         @id @default(uuid())
+  nom                  String
+  prenom               String
+  dateNaissance        DateTime?
+  sexe                 String?
+  groupeSanguin        String?
+  poids                Float?
+  antecedentsMedicaux  String?
+  
+  prescriptions        Prescription[]
+  rendezVous           RendezVous[]
+  dossiersCPA          DossierCPA[]
+  checklistsAvant      ChecklistAvant[]
+}
+
+model Medecin {
+  id                   String         @id @default(uuid())
+  nom                  String
+  prenom               String
+  specialite           String?
+  role                 String?
+
+  prescriptions        Prescription[]
+  rendezVous           RendezVous[]
+  dossiersCPA          DossierCPA[]
+}
+
+model Salle {
+  id                   String         @id @default(uuid())
+  nom                  String
+  numero               String
+  capacite             Int            @default(1)
+  equipement           String?        @default("")
+  estActive            Boolean        @default(true)
+  
+  rendezVous           RendezVous[]
+}
+
+model Prescription {
+  id                      String         @id @default(uuid())
+  patient                 Patient        @relation(fields: [patientId], references: [id])
+  patientId               String
+  medecinPrescripteur     Medecin        @relation(fields: [medecinId], references: [id])
+  medecinId               String
+  typeExamen              String
+  motif                   String?
+  priorite                String         @default("Standard")
+  statut                  String         @default("A planifier")
+  dateDemande             DateTime       @default(now())
+
+  rendezVous              RendezVous?
+  dossierCPA              DossierCPA?
+  checklistAvant          ChecklistAvant?
+
+  @@index([medecinId])
+  @@index([patientId])
+}
+
+model RendezVous {
+  id                      String         @id @default(uuid())
+  patient                 Patient?       @relation(fields: [patientId], references: [id])
+  patientId               String?
+  prescription            Prescription?  @relation(fields: [prescriptionId], references: [id])
+  prescriptionId          String?        @unique
+  salle                   Salle?         @relation(fields: [salleId], references: [id])
+  salleId                 String?
+  medecin                 Medecin?       @relation(fields: [medecinId], references: [id])
+  medecinId               String?
+  dateHeureDebut          DateTime
+  dateHeureFin            DateTime?
+  typeAnesthesie          String?
+  statut                  String         @default("Prevu")
+  notesCliniques          String?
+
+
+
+  @@index([patientId])
+  @@index([medecinId])
+  @@index([prescriptionId])
+}
+
+model DossierCPA {
+  id                String         @id @default(uuid())
+  patient           Patient        @relation(fields: [patientId], references: [id])
+  patientId         String
+  prescription      Prescription?  @relation(fields: [prescriptionId], references: [id])
+  prescriptionId    String?        @unique
+  anesthesiste      Medecin?       @relation(fields: [anesthesisteId], references: [id])
+  anesthesisteId    String?
+  typeAnesthesie    String?
+  observations      String?
+  statut            String         @default("Brouillon")
+  dateValidation    DateTime?
+
+  @@index([patientId])
+  @@index([anesthesisteId])
+  @@index([prescriptionId])
+}
+
+model ChecklistAvant {
+  id                        String         @id @default(uuid())
+  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
+  prescriptionId            String         @unique
+  rendezVousId              String?
+  patient                   Patient        @relation(fields: [patientId], references: [id])
+  patientId                 String
+  
+  // Champs de la check-list (alignés sur l'UI)
+  identiteVerifiee          Boolean        @default(false)
+  procedureConfirmee        Boolean        @default(false)
+  materielDisponible        Boolean        @default(false)
+  risquesVerifies           Boolean        @default(false)
+  jeuneRespecte             Boolean        @default(false)
+  preparationAdequate       Boolean        @default(false)
+  validationCollegiale      Boolean        @default(false)
+  anticoagulantsArretes     Boolean        @default(false)
+  antibioprophylaxie        Boolean        @default(false)
+  tenueAppropriee           Boolean        @default(false)
+  
+  constantes_tension        String?
+  constantes_pouls          String?
+  constantes_saturation     String?
+  
+  observations              String?        @db.Text
+  estValide                 Boolean        @default(false)
+  dateCreation              DateTime       @default(now())
+  dateModification          DateTime       @updatedAt
+
+  @@index([patientId])
+  @@index([prescriptionId])
+}
