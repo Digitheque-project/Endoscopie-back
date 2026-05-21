@@ -1,0 +1,25 @@
+# Blueprint Render — déploiement du backend NestJS
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: endoscopie-api
+    runtime: node
+    rootDir: endoscopie-back
+    buildCommand: npm install && npx prisma generate && npm run build
+    startCommand: npm run start:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: endoscopie-bd
+          property: connectionString
+      - key: FRONTEND_URL
+        sync: false
+    healthCheckPath: /
+
+databases:
+  - name: endoscopie-bd
+    plan: free
+    databaseName: endoscopie_bd
+    user: endoscopie_bd_user
