@@ -30,7 +30,7 @@ Si la branche par défaut est `master` : `git push github master`
 | **Name** | `endoscopie-api` |
 | **Root Directory** | `endoscopie-back` |
 | **Runtime** | Node |
-| **Build Command** | `npm install && npx prisma generate && npm run build` |
+| **Build Command** | `npm install --include=dev && npx prisma generate && npm run build` |
 | **Start Command** | `npm run start:prod` |
 | **Instance type** | Free (ou payant selon besoin) |
 
@@ -97,7 +97,8 @@ Ou utiliser le proxy Next uniquement en local (`next.config.ts`).
 | Problème | Solution |
 |----------|----------|
 | Build échoue sur Prisma | Vérifier `buildCommand` avec `npx prisma generate` |
-| `Application failed to respond` | Vérifier `start:prod` → `node dist/src/main.js` |
+| `Cannot find module dist/.../main.js` | `start:prod` doit être `node dist/main.js` |
+| `Application failed to respond` | Vérifier que le build a réussi et que `DATABASE_URL` est défini |
 | Erreur DB | `DATABASE_URL` + `?sslmode=require` |
 | CORS | Ajouter l’URL du front dans `FRONTEND_URL` |
 | Service Free lent | Premier appel après veille ≈ 30–60 s |

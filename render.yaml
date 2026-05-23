@@ -5,7 +5,7 @@ services:
     name: endoscopie-api
     runtime: node
     rootDir: endoscopie-back
-    buildCommand: npm install && npx prisma generate && npm run build
+    buildCommand: npm install --include=dev && npx prisma generate && npm run build
     startCommand: npm run start:prod
     envVars:
       - key: NODE_ENV
