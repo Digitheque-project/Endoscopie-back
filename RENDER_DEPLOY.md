@@ -80,6 +80,7 @@ URL Render du type : `https://endoscopie-api.onrender.com`
 
 - `GET https://endoscopie-api.onrender.com/` → réponse NestJS
 - `GET https://endoscopie-api.onrender.com/api/salles` → JSON des salles
+- Documentation Swagger : `https://endoscopie-api.onrender.com/api/docs`
 
 ## 7. Connecter le frontend
 
