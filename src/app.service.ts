@@ -1,5 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from './prisma/prisma.service';
+import { CreatePrescriptionDto } from './dto/create-prescription.dto';
+import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
+import { CreatePatientDto } from './dto/create-patient.dto';
+import { CreateMedecinDto } from './dto/create-medecin.dto';
+import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
+import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 
 @Injectable()
 export class AppService {
@@ -53,7 +59,7 @@ export class AppService {
     });
   }
 
-  async createPrescription(data: any) {
+  async createPrescription(data: CreatePrescriptionDto) {
     return this.prisma.prescription.create({
       data: {
         patientId: data.patientId,
@@ -64,6 +70,68 @@ export class AppService {
         statut: data.statut || 'A planifier',
         dateDemande: data.dateDemande ? new Date(data.dateDemande) : new Date(),
       },
+      include: {
+        patient: true,
+        medecinPrescripteur: true,
+      },
+    });
+  }
+
+  async updatePrescription(id: string, data: UpdatePrescriptionDto) {
+    try {
+      return await this.prisma.prescription.update({
+        where: { id },
+        data: {
+          ...(data.statut !== undefined && { statut: data.statut }),
+          ...(data.priorite !== undefined && { priorite: data.priorite }),
+          ...(data.typeExamen !== undefined && { typeExamen: data.typeExamen }),
+          ...(data.motif !== undefined && { motif: data.motif }),
+        },
+        include: {
+          patient: true,
+          medecinPrescripteur: true,
+        },
+      });
+    } catch {
+      throw new NotFoundException(`Prescription ${id} introuvable`);
+    }
+  }
+
+  async getPatients() {
+    return this.prisma.patient.findMany({
+      orderBy: [{ nom: 'asc' }, { prenom: 'asc' }],
+    });
+  }
+
+  async getPatientById(id: string) {
+    const patient = await this.prisma.patient.findUnique({
+      where: { id },
+      include: {
+        prescriptions: {
+          include: { medecinPrescripteur: true },
+          orderBy: { dateDemande: 'desc' },
+        },
+        rendezVous: true,
+        dossiersCPA: true,
+      },
+    });
+    if (!patient) {
+      throw new NotFoundException(`Patient ${id} introuvable`);
+    }
+    return patient;
+  }
+
+  async createPatient(data: CreatePatientDto) {
+    return this.prisma.patient.create({
+      data: {
+        nom: data.nom,
+        prenom: data.prenom,
+        dateNaissance: data.dateNaissance ? new Date(data.dateNaissance) : null,
+        sexe: data.sexe ?? null,
+        groupeSanguin: data.groupeSanguin ?? null,
+        poids: data.poids ?? null,
+        antecedentsMedicaux: data.antecedentsMedicaux ?? null,
+      },
     });
   }
 
@@ -71,6 +139,110 @@ export class AppService {
     return this.prisma.medecin.findMany({
       orderBy: [{ nom: 'asc' }, { prenom: 'asc' }],
     });
+  }
+
+  async getMedecinById(id: string) {
+    const medecin = await this.prisma.medecin.findUnique({ where: { id } });
+    if (!medecin) {
+      throw new NotFoundException(`Médecin ${id} introuvable`);
+    }
+    return medecin;
+  }
+
+  async createMedecin(data: CreateMedecinDto) {
+    return this.prisma.medecin.create({
+      data: {
+        nom: data.nom,
+        prenom: data.prenom,
+        specialite: data.specialite ?? null,
+        role: data.role ?? null,
+      },
+    });
+  }
+
+  async getDossiersCpa() {
+    return this.prisma.dossierCPA.findMany({
+      include: {
+        patient: true,
+        prescription: true,
+        anesthesiste: true,
+      },
+      orderBy: { id: 'desc' },
+    });
+  }
+
+  async getDossierCpaById(id: string) {
+    const dossier = await this.prisma.dossierCPA.findUnique({
+      where: { id },
+      include: {
+        patient: true,
+        prescription: true,
+        anesthesiste: true,
+      },
+    });
+    if (!dossier) {
+      throw new NotFoundException(`Dossier CPA ${id} introuvable`);
+    }
+    return dossier;
+  }
+
+  async getDossierCpaByPrescriptionId(prescriptionId: string) {
+    return this.prisma.dossierCPA.findUnique({
+      where: { prescriptionId },
+      include: {
+        patient: true,
+        prescription: true,
+        anesthesiste: true,
+      },
+    });
+  }
+
+  async createDossierCpa(data: CreateDossierCpaDto) {
+    return this.prisma.dossierCPA.create({
+      data: {
+        patientId: data.patientId,
+        prescriptionId: data.prescriptionId ?? null,
+        anesthesisteId: data.anesthesisteId ?? null,
+        typeAnesthesie: data.typeAnesthesie ?? null,
+        observations: data.observations ?? null,
+        statut: data.statut || 'Brouillon',
+      },
+      include: {
+        patient: true,
+        prescription: true,
+        anesthesiste: true,
+      },
+    });
+  }
+
+  async updateDossierCpa(id: string, data: UpdateDossierCpaDto) {
+    try {
+      return await this.prisma.dossierCPA.update({
+        where: { id },
+        data: {
+          ...(data.anesthesisteId !== undefined && {
+            anesthesisteId: data.anesthesisteId,
+          }),
+          ...(data.typeAnesthesie !== undefined && {
+            typeAnesthesie: data.typeAnesthesie,
+          }),
+          ...(data.observations !== undefined && {
+            observations: data.observations,
+          }),
+          ...(data.statut !== undefined && { statut: data.statut }),
+          ...(data.dateValidation !== undefined && {
+            dateValidation: new Date(data.dateValidation),
+          }),
+        },
+        include: {
+          patient: true,
+          prescription: true,
+          anesthesiste: true,
+        },
+      });
+    } catch {
+      throw new NotFoundException(`Dossier CPA ${id} introuvable`);
+    }
   }
 
   async getRendezVous() {

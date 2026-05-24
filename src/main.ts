@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
@@ -21,11 +22,23 @@ async function bootstrap() {
     .setVersion('1.0')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+  SwaggerModule.setup('api/docs', app, document, {
+    customSiteTitle: 'API Endoscopie',
+    swaggerOptions: {
+      docExpansion: 'list',
+      filter: true,
+      displayOperationId: true,
+      persistAuthorization: true,
+    },
+    customJs: join(__dirname, 'swagger', 'force-en-methods.js'),
+  });
 
   const port = parseInt(process.env.PORT ?? '3333', 10) || 3333;
   await app.listen(port);
-  console.log(`Application is running on: http://localhost:${port}`);
-  console.log(`Swagger UI: http://localhost:${port}/api/docs`);
+  const publicUrl =
+    process.env.RENDER_EXTERNAL_URL?.replace(/\/$/, '') ??
+    `http://localhost:${port}`;
+  console.log(`Application is running on: ${publicUrl}`);
+  console.log(`Swagger UI: ${publicUrl}/api/docs`);
 }
 bootstrap();
