@@ -138,21 +138,35 @@ export class AppService {
       throw new BadRequestException('typeExamen est obligatoire');
     }
 
+    // Si le patient n'existe pas dans la base, on le crée automatiquement
+    // (cas: l'appelant fournit un patientId externe).
     const [patient, medecin] = await Promise.all([
-      this.prisma.patient.findUnique({ where: { id: data.patientId } }),
-      this.prisma.medecin.findUnique({ where: { id: data.medecinId } }),
+      this.prisma.patient.upsert({
+        where: { id: data.patientId },
+        update: {},
+        create: {
+          id: data.patientId,
+          nom: 'INCONNU',
+          prenom: 'PATIENT',
+          dateNaissance: null,
+          sexe: null,
+          groupeSanguin: null,
+          poids: null,
+          antecedentsMedicaux: null,
+        },
+      }),
+      this.prisma.medecin.upsert({
+        where: { id: data.medecinId },
+        update: {},
+        create: {
+          id: data.medecinId,
+          nom: 'INCONNU',
+          prenom: 'MEDECIN',
+          specialite: null,
+          role: null,
+        },
+      }),
     ]);
-
-    if (!patient) {
-      throw new BadRequestException(
-        `Patient introuvable (${data.patientId}). Appelez GET /api/patients pour un id valide.`,
-      );
-    }
-    if (!medecin) {
-      throw new BadRequestException(
-        `Médecin introuvable (${data.medecinId}). Appelez GET /api/medecins pour un id valide.`,
-      );
-    }
 
     try {
       return await this.prisma.prescription.create({
@@ -180,7 +194,7 @@ export class AppService {
       const msg = error instanceof Error ? error.message : String(error);
       if (msg.includes('serviceId')) {
         throw new BadRequestException(
-          'Colonne serviceId absente. Exécutez: npx prisma migrate deploy sur le serveur.',
+          'Colonne serviceId absente. Exécutez le script SQL de migration puis npx prisma db push.',
         );
       }
       throw error;

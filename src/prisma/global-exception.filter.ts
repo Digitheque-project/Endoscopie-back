@@ -36,7 +36,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         case 'P2021':
         case 'P2022':
           message =
-            'Base non à jour : exécutez npx prisma migrate deploy (colonne serviceId manquante).';
+            'Base non à jour : appliquez le SQL de migration serviceId puis lancez npx prisma db push.';
           status = HttpStatus.INTERNAL_SERVER_ERROR;
           break;
         default:
@@ -50,7 +50,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     if (exception instanceof Prisma.PrismaClientValidationError) {
       const message = exception.message;
       const hint = message.includes('serviceId')
-        ? ' Redéployez avec migrate deploy et prisma generate.'
+        ? ' Appliquez la migration SQL serviceId puis relancez npx prisma db push.'
         : '';
       response.status(HttpStatus.BAD_REQUEST).json({
         statusCode: HttpStatus.BAD_REQUEST,
