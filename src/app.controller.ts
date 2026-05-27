@@ -5,11 +5,13 @@ import {
   Patch,
   Body,
   Param,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiOkResponse,
   ApiBody,
 } from '@nestjs/swagger';
@@ -38,8 +40,25 @@ export class AppController {
   @Get('api/test-db')
   @ApiTags('Diagnostic')
   @ApiOperation({ summary: 'Tester la connexion Prisma / base de données' })
-  async testDb() {
-    return this.appService.testDb();
+  @ApiQuery({ name: 'serviceId', required: false })
+  async testDb(@Query('serviceId') serviceId?: string) {
+    return this.appService.testDb(serviceId);
+  }
+
+  @Get('api/health')
+  @ApiTags('Diagnostic')
+  @ApiOperation({ summary: 'État de la base (migration serviceId, compteurs)' })
+  getHealth() {
+    return this.appService.getHealth();
+  }
+
+  @Get('api/config/endoscopie')
+  @ApiTags('Configuration')
+  @ApiOperation({
+    summary: 'Configuration du service Endoscopie (ID CHU Railway)',
+  })
+  getEndoscopieConfig() {
+    return this.appService.getEndoscopieConfig();
   }
 
   // ——— Patients ———
@@ -94,16 +113,21 @@ export class AppController {
   @Get('api/prescriptions')
   @ApiTags('Prescriptions')
   @ApiOperation({ summary: 'Lister toutes les prescriptions' })
-  async getPrescriptions() {
-    return this.appService.getPrescriptions();
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPrescriptions(@Query('serviceId') serviceId?: string) {
+    return this.appService.getPrescriptions(serviceId);
   }
 
   @Get('api/prescriptions/:id')
   @ApiTags('Prescriptions')
   @ApiOperation({ summary: 'Récupérer une prescription par ID' })
   @ApiParam({ name: 'id', description: 'UUID de la prescription' })
-  async getPrescriptionById(@Param('id') id: string) {
-    return this.appService.getPrescriptionById(id);
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPrescriptionById(
+    @Param('id') id: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getPrescriptionById(id, serviceId);
   }
 
   @Post('api/prescriptions')
@@ -137,8 +161,9 @@ export class AppController {
   @Get('api/dossiers-cpa')
   @ApiTags('Dossiers CPA')
   @ApiOperation({ summary: 'Lister tous les dossiers CPA' })
-  async getDossiersCpa() {
-    return this.appService.getDossiersCpa();
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getDossiersCpa(@Query('serviceId') serviceId?: string) {
+    return this.appService.getDossiersCpa(serviceId);
   }
 
   @Get('api/dossiers-cpa/prescription/:prescriptionId')
@@ -183,8 +208,9 @@ export class AppController {
   @Get('api/rendezvous')
   @ApiTags('Rendez-vous')
   @ApiOperation({ summary: 'Lister les rendez-vous' })
-  async getRendezVous() {
-    return this.appService.getRendezVous();
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getRendezVous(@Query('serviceId') serviceId?: string) {
+    return this.appService.getRendezVous(serviceId);
   }
 
   @Post('api/rendezvous')
@@ -200,8 +226,9 @@ export class AppController {
   @Get('api/salles')
   @ApiTags('Salles')
   @ApiOperation({ summary: 'Lister les salles' })
-  async getSalles() {
-    return this.appService.getSalles();
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getSalles(@Query('serviceId') serviceId?: string) {
+    return this.appService.getSalles(serviceId);
   }
 
   @Post('api/salles')
@@ -217,8 +244,12 @@ export class AppController {
   @ApiTags('Checklists')
   @ApiOperation({ summary: 'Récupérer la checklist avant endoscopie' })
   @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
-  async getChecklistAvant(@Param('prescriptionId') prescriptionId: string) {
-    return this.appService.getChecklistAvant(prescriptionId);
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getChecklistAvant(
+    @Param('prescriptionId') prescriptionId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getChecklistAvant(prescriptionId, serviceId);
   }
 
   @Post('api/checklists/avant')

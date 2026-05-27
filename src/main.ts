@@ -3,9 +3,11 @@ import { join } from 'path';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { GlobalExceptionFilter } from './prisma/global-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.useGlobalFilters(new GlobalExceptionFilter());
   const frontendOrigins = process.env.FRONTEND_URL
     ? process.env.FRONTEND_URL.split(',').map((o) => o.trim())
     : ['http://localhost:3000', 'http://127.0.0.1:3000'];

@@ -1,5 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
+import {
+  getChuApiUrl,
+  getEndoscopieServiceId,
+} from './config/endoscopie-service';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
 import { CreatePatientDto } from './dto/create-patient.dto';
@@ -11,16 +20,70 @@ import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 export class AppService {
   constructor(private prisma: PrismaService) {}
 
+  getEndoscopieServiceId(override?: string): string {
+    return getEndoscopieServiceId(override);
+  }
+
+  private scope(override?: string) {
+    return { serviceId: this.getEndoscopieServiceId(override) };
+  }
+
+  async getEndoscopieConfig() {
+    const serviceId = this.getEndoscopieServiceId();
+    const chuApiUrl = getChuApiUrl();
+    let service: Record<string, unknown> | null = null;
+    try {
+      const res = await fetch(`${chuApiUrl}/service/${serviceId}`);
+      if (res.ok) {
+        service = (await res.json()) as Record<string, unknown>;
+      }
+    } catch {
+      service = null;
+    }
+    return { serviceId, chuApiUrl, service };
+  }
+
   getHello(): string {
     return 'Hello World!';
   }
 
-  async testDb() {
-    // Créer une salle de test si la base est vide
-    const count = await this.prisma.salle.count();
+  async getHealth() {
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+      const columns = await this.prisma.$queryRaw<
+        { column_name: string }[]
+      >`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'Prescription'
+          AND column_name = 'serviceId'
+      `;
+      const [patients, medecins, prescriptions] = await Promise.all([
+        this.prisma.patient.count(),
+        this.prisma.medecin.count(),
+        this.prisma.prescription.count(),
+      ]);
+      return {
+        ok: true,
+        database: 'connected',
+        hasServiceIdColumn: columns.length > 0,
+        endoscopieServiceId: this.getEndoscopieServiceId(),
+        counts: { patients, medecins, prescriptions },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, database: 'error', message };
+    }
+  }
+
+  async testDb(serviceIdOverride?: string) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const count = await this.prisma.salle.count({ where: { serviceId } });
     if (count === 0) {
       await this.prisma.salle.create({
         data: {
+          serviceId,
           nom: 'Salle de Test',
           numero: 'S01',
           capacite: 1,
@@ -28,15 +91,17 @@ export class AppService {
       });
     }
 
-    const salles = await this.prisma.salle.findMany();
+    const salles = await this.prisma.salle.findMany({ where: { serviceId } });
     return {
       message: 'Connexion Prisma réussie !',
+      serviceId,
       salles,
     };
   }
 
-  async getPrescriptions() {
+  async getPrescriptions(serviceIdOverride?: string) {
     return this.prisma.prescription.findMany({
+      where: this.scope(serviceIdOverride),
       include: {
         patient: true,
         medecinPrescripteur: true,
@@ -47,9 +112,9 @@ export class AppService {
     });
   }
 
-  async getPrescriptionById(id: string) {
-    return this.prisma.prescription.findUnique({
-      where: { id },
+  async getPrescriptionById(id: string, serviceIdOverride?: string) {
+    const prescription = await this.prisma.prescription.findFirst({
+      where: { id, ...this.scope(serviceIdOverride) },
       include: {
         patient: true,
         medecinPrescripteur: true,
@@ -57,27 +122,77 @@ export class AppService {
         checklistAvant: true,
       },
     });
+    if (!prescription) {
+      throw new NotFoundException(`Prescription ${id} introuvable`);
+    }
+    return prescription;
   }
 
   async createPrescription(data: CreatePrescriptionDto) {
-    return this.prisma.prescription.create({
-      data: {
-        patientId: data.patientId,
-        medecinId: data.medecinId,
-        typeExamen: data.typeExamen,
-        motif: data.motif || '',
-        priorite: data.priorite || 'Standard',
-        statut: data.statut || 'A planifier',
-        dateDemande: data.dateDemande ? new Date(data.dateDemande) : new Date(),
-      },
-      include: {
-        patient: true,
-        medecinPrescripteur: true,
-      },
-    });
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
+
+    if (!data.patientId?.trim() || !data.medecinId?.trim()) {
+      throw new BadRequestException('patientId et medecinId sont obligatoires');
+    }
+    if (!data.typeExamen?.trim()) {
+      throw new BadRequestException('typeExamen est obligatoire');
+    }
+
+    const [patient, medecin] = await Promise.all([
+      this.prisma.patient.findUnique({ where: { id: data.patientId } }),
+      this.prisma.medecin.findUnique({ where: { id: data.medecinId } }),
+    ]);
+
+    if (!patient) {
+      throw new BadRequestException(
+        `Patient introuvable (${data.patientId}). Appelez GET /api/patients pour un id valide.`,
+      );
+    }
+    if (!medecin) {
+      throw new BadRequestException(
+        `Médecin introuvable (${data.medecinId}). Appelez GET /api/medecins pour un id valide.`,
+      );
+    }
+
+    try {
+      return await this.prisma.prescription.create({
+        data: {
+          serviceId,
+          patientId: data.patientId,
+          medecinId: data.medecinId,
+          typeExamen: data.typeExamen,
+          motif: data.motif || '',
+          priorite: data.priorite || 'Standard',
+          statut: data.statut || 'A planifier',
+          dateDemande: data.dateDemande
+            ? new Date(data.dateDemande)
+            : new Date(),
+        },
+        include: {
+          patient: true,
+          medecinPrescripteur: true,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        throw error;
+      }
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('serviceId')) {
+        throw new BadRequestException(
+          'Colonne serviceId absente. Exécutez: npx prisma migrate deploy sur le serveur.',
+        );
+      }
+      throw error;
+    }
   }
 
-  async updatePrescription(id: string, data: UpdatePrescriptionDto) {
+  async updatePrescription(
+    id: string,
+    data: UpdatePrescriptionDto,
+    serviceIdOverride?: string,
+  ) {
+    await this.getPrescriptionById(id, serviceIdOverride);
     try {
       return await this.prisma.prescription.update({
         where: { id },
@@ -103,16 +218,18 @@ export class AppService {
     });
   }
 
-  async getPatientById(id: string) {
+  async getPatientById(id: string, serviceIdOverride?: string) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
     const patient = await this.prisma.patient.findUnique({
       where: { id },
       include: {
         prescriptions: {
+          where: { serviceId },
           include: { medecinPrescripteur: true },
           orderBy: { dateDemande: 'desc' },
         },
-        rendezVous: true,
-        dossiersCPA: true,
+        rendezVous: { where: { serviceId } },
+        dossiersCPA: { where: { serviceId } },
       },
     });
     if (!patient) {
@@ -160,8 +277,9 @@ export class AppService {
     });
   }
 
-  async getDossiersCpa() {
+  async getDossiersCpa(serviceIdOverride?: string) {
     return this.prisma.dossierCPA.findMany({
+      where: this.scope(serviceIdOverride),
       include: {
         patient: true,
         prescription: true,
@@ -171,9 +289,9 @@ export class AppService {
     });
   }
 
-  async getDossierCpaById(id: string) {
-    const dossier = await this.prisma.dossierCPA.findUnique({
-      where: { id },
+  async getDossierCpaById(id: string, serviceIdOverride?: string) {
+    const dossier = await this.prisma.dossierCPA.findFirst({
+      where: { id, ...this.scope(serviceIdOverride) },
       include: {
         patient: true,
         prescription: true,
@@ -186,9 +304,12 @@ export class AppService {
     return dossier;
   }
 
-  async getDossierCpaByPrescriptionId(prescriptionId: string) {
-    return this.prisma.dossierCPA.findUnique({
-      where: { prescriptionId },
+  async getDossierCpaByPrescriptionId(
+    prescriptionId: string,
+    serviceIdOverride?: string,
+  ) {
+    return this.prisma.dossierCPA.findFirst({
+      where: { prescriptionId, ...this.scope(serviceIdOverride) },
       include: {
         patient: true,
         prescription: true,
@@ -198,8 +319,10 @@ export class AppService {
   }
 
   async createDossierCpa(data: CreateDossierCpaDto) {
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
     return this.prisma.dossierCPA.create({
       data: {
+        serviceId,
         patientId: data.patientId,
         prescriptionId: data.prescriptionId ?? null,
         anesthesisteId: data.anesthesisteId ?? null,
@@ -215,7 +338,12 @@ export class AppService {
     });
   }
 
-  async updateDossierCpa(id: string, data: UpdateDossierCpaDto) {
+  async updateDossierCpa(
+    id: string,
+    data: UpdateDossierCpaDto,
+    serviceIdOverride?: string,
+  ) {
+    await this.getDossierCpaById(id, serviceIdOverride);
     try {
       return await this.prisma.dossierCPA.update({
         where: { id },
@@ -245,8 +373,9 @@ export class AppService {
     }
   }
 
-  async getRendezVous() {
+  async getRendezVous(serviceIdOverride?: string) {
     return this.prisma.rendezVous.findMany({
+      where: this.scope(serviceIdOverride),
       include: {
         patient: true,
         medecin: true,
@@ -254,7 +383,7 @@ export class AppService {
         prescription: {
           include: {
             dossierCPA: true,
-          }
+          },
         },
       },
       orderBy: {
@@ -263,12 +392,16 @@ export class AppService {
     });
   }
 
-  async getSalles() {
-    return this.prisma.salle.findMany();
+  async getSalles(serviceIdOverride?: string) {
+    return this.prisma.salle.findMany({
+      where: this.scope(serviceIdOverride),
+    });
   }
 
   async createRendezVous(data: any) {
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
     const rendezVousPayload = {
+      serviceId,
       patientId: data.patientId || null,
       prescriptionId: data.prescriptionId || null,
       medecinId: data.medecinId || null,
@@ -282,9 +415,8 @@ export class AppService {
 
     try {
       if (data.prescriptionId) {
-        // Update prescription status to "Planifié"
-        await this.prisma.prescription.update({
-          where: { id: data.prescriptionId },
+        await this.prisma.prescription.updateMany({
+          where: { id: data.prescriptionId, serviceId },
           data: { statut: 'Planifié' },
         });
 
@@ -305,29 +437,36 @@ export class AppService {
   }
 
   async createSalle(data: any) {
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
     return this.prisma.salle.create({
       data: {
+        serviceId,
         nom: data.nom,
         numero: data.numero,
         capacite: parseInt(data.capacite) || 1,
-        equipement: data.equipement || "",
-      }
+        equipement: data.equipement || '',
+      },
     });
   }
 
-  async getChecklistAvant(prescriptionId: string) {
-    return this.prisma.checklistAvant.findUnique({
-      where: { prescriptionId },
-      include: { patient: true }
+  async getChecklistAvant(
+    prescriptionId: string,
+    serviceIdOverride?: string,
+  ) {
+    return this.prisma.checklistAvant.findFirst({
+      where: { prescriptionId, ...this.scope(serviceIdOverride) },
+      include: { patient: true },
     });
   }
 
   async saveChecklistAvant(data: any) {
-    console.log("Saving checklist avant for patient:", data.patientId, "Prescription:", data.prescriptionId, "RendezVous:", data.rendezVousId);
-    
     if (!data.prescriptionId) {
-      throw new Error("prescriptionId est obligatoire pour enregistrer la checklist");
+      throw new Error(
+        'prescriptionId est obligatoire pour enregistrer la checklist',
+      );
     }
+
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
 
     const checklistData = {
       identiteVerifiee: !!data.identiteVerifiee,
@@ -348,17 +487,15 @@ export class AppService {
       rendezVousId: data.rendezVousId || null,
     };
 
-    const result = await this.prisma.checklistAvant.upsert({
+    return this.prisma.checklistAvant.upsert({
       where: { prescriptionId: data.prescriptionId },
       update: checklistData,
       create: {
         ...checklistData,
+        serviceId,
         prescriptionId: data.prescriptionId,
         patientId: data.patientId,
-      }
+      },
     });
-    
-    console.log("Checklist processed successfully for prescription:", data.prescriptionId);
-    return result;
   }
 }

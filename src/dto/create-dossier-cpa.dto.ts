@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateDossierCpaDto {
+  @ApiPropertyOptional({ example: '38f39d38-152e-495b-8c48-28937750d9eb' })
+  serviceId?: string;
+
   @ApiProperty({ example: 'uuid-patient' })
   patientId: string;
 

@@ -37,6 +37,7 @@ model Medecin {
 
 model Salle {
   id                   String         @id @default(uuid())
+  serviceId            String
   nom                  String
   numero               String
   capacite             Int            @default(1)
@@ -44,10 +45,13 @@ model Salle {
   estActive            Boolean        @default(true)
   
   rendezVous           RendezVous[]
+
+  @@index([serviceId])
 }
 
 model Prescription {
   id                      String         @id @default(uuid())
+  serviceId               String
   patient                 Patient        @relation(fields: [patientId], references: [id])
   patientId               String
   medecinPrescripteur     Medecin        @relation(fields: [medecinId], references: [id])
@@ -64,10 +68,12 @@ model Prescription {
 
   @@index([medecinId])
   @@index([patientId])
+  @@index([serviceId])
 }
 
 model RendezVous {
   id                      String         @id @default(uuid())
+  serviceId               String
   patient                 Patient?       @relation(fields: [patientId], references: [id])
   patientId               String?
   prescription            Prescription?  @relation(fields: [prescriptionId], references: [id])
@@ -87,10 +93,12 @@ model RendezVous {
   @@index([patientId])
   @@index([medecinId])
   @@index([prescriptionId])
+  @@index([serviceId])
 }
 
 model DossierCPA {
   id                String         @id @default(uuid())
+  serviceId         String
   patient           Patient        @relation(fields: [patientId], references: [id])
   patientId         String
   prescription      Prescription?  @relation(fields: [prescriptionId], references: [id])
@@ -105,10 +113,12 @@ model DossierCPA {
   @@index([patientId])
   @@index([anesthesisteId])
   @@index([prescriptionId])
+  @@index([serviceId])
 }
 
 model ChecklistAvant {
   id                        String         @id @default(uuid())
+  serviceId                 String
   prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
   prescriptionId            String         @unique
   rendezVousId              String?
@@ -138,4 +148,5 @@ model ChecklistAvant {
 
   @@index([patientId])
   @@index([prescriptionId])
+  @@index([serviceId])
 }

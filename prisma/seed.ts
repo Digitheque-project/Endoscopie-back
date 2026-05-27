@@ -2,6 +2,9 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+const ENDOSCOPIE_SERVICE_ID =
+  process.env.ENDOSCOPIE_SERVICE_ID || '38f39d38-152e-495b-8c48-28937750d9eb';
+
 async function main() {
   console.log('🌱 Remplissage de la base de données avec des données réalistes...\n');
 
@@ -143,6 +146,7 @@ async function main() {
 
       const prescription = await prisma.prescription.create({
         data: {
+          serviceId: ENDOSCOPIE_SERVICE_ID,
           patientId: patient.id,
           medecinId: randomMedecin.id,
           typeExamen: randomType,

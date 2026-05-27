@@ -5,11 +5,15 @@ services:
     name: endoscopie-api
     runtime: node
     rootDir: endoscopie-back
-    buildCommand: npm install --include=dev && npx prisma generate && npm run build
-    startCommand: npm run start:prod
+    buildCommand: npm install --include=dev && npx prisma generate && npx prisma migrate deploy && npm run build
+    startCommand: npm run start:render
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ENDOSCOPIE_SERVICE_ID
+        value: 38f39d38-152e-495b-8c48-28937750d9eb
+      - key: CHU_API_URL
+        value: https://service-chu-back-production-77d5.up.railway.app
       - key: DATABASE_URL
         fromDatabase:
           name: endoscopie-bd
