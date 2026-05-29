@@ -61,6 +61,48 @@ export class AppController {
     return this.appService.getEndoscopieConfig();
   }
 
+  @Get('api/notifications/health')
+  @ApiTags('Notifications')
+  @ApiOperation({ summary: 'Vérifier la connexion au service notification Render' })
+  getNotificationHealth() {
+    return this.appService.getNotificationHealth();
+  }
+
+  @Get('api/notifications')
+  @ApiTags('Notifications')
+  @ApiOperation({ summary: 'Lister les notifications (proxy service Render)' })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Ex: ENVOYE, PENDING, LU',
+    example: 'ENVOYE',
+  })
+  listNotifications(@Query('status') status = 'ENVOYE') {
+    return this.appService.listNotifications(status);
+  }
+
+  @Post('api/notifications')
+  @ApiTags('Notifications')
+  @ApiOperation({ summary: 'Envoyer une notification au service Render' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['type', 'motif'],
+      properties: {
+        type: { type: 'string', example: 'MEDICAL_ALERT' },
+        motif: { type: 'string', example: 'Nouvelle prescription endoscopie' },
+        urgence: { type: 'number', example: 2 },
+        patientId: { type: 'string' },
+        entiteRefType: { type: 'string', example: 'Prescription' },
+        entiteRefId: { type: 'string' },
+        channels: { type: 'array', items: { type: 'string' }, example: ['WEB', 'SOUND'] },
+      },
+    },
+  })
+  createNotification(@Body() body: Record<string, unknown>) {
+    return this.appService.createNotification(body as never);
+  }
+
   // ——— Patients ———
   @Get('api/patients')
   @ApiTags('Patients')

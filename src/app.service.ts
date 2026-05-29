@@ -15,10 +15,19 @@ import { CreatePatientDto } from './dto/create-patient.dto';
 import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
+import { NotificationService } from './notification/notification.service';
+import {
+  getNotificationApiUrl,
+  getNotificationWebhookUrl,
+} from './config/notification-service';
+import { CreateNotificationPayload } from './notification/notification.types';
 
 @Injectable()
 export class AppService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationService: NotificationService,
+  ) {}
 
   getEndoscopieServiceId(override?: string): string {
     return getEndoscopieServiceId(override);
@@ -169,7 +178,7 @@ export class AppService {
     ]);
 
     try {
-      return await this.prisma.prescription.create({
+      const prescription = await this.prisma.prescription.create({
         data: {
           serviceId,
           patientId: data.patientId,
@@ -187,6 +196,10 @@ export class AppService {
           medecinPrescripteur: true,
         },
       });
+
+      await this.notificationService.notifyPrescriptionCreated(prescription);
+
+      return prescription;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw error;
@@ -511,5 +524,21 @@ export class AppService {
         patientId: data.patientId,
       },
     });
+  }
+
+  listNotifications(status = 'ENVOYE') {
+    return this.notificationService.listNotifications(status);
+  }
+
+  createNotification(payload: CreateNotificationPayload) {
+    return this.notificationService.createNotification(payload);
+  }
+
+  getNotificationHealth() {
+    return this.notificationService.checkHealth().then((health) => ({
+      notificationApiUrl: getNotificationApiUrl(),
+      webhookReceiveUrl: getNotificationWebhookUrl(),
+      ...health,
+    }));
   }
 }
