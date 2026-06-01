@@ -19,6 +19,9 @@ import { AppService } from './app.service';
 import { CreateRendezVousDto } from './dto/create-rendezvous.dto';
 import { CreateSalleDto } from './dto/create-salle.dto';
 import { SaveChecklistAvantDto } from './dto/save-checklist-avant.dto';
+import { SaveOperationDto } from './dto/save-operation.dto';
+import { SaveChecklistApresDto } from './dto/save-checklist-apres.dto';
+import { SaveResultatDto } from './dto/save-resultat.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
 import { CreatePatientDto } from './dto/create-patient.dto';
@@ -70,15 +73,30 @@ export class AppController {
 
   @Get('api/notifications')
   @ApiTags('Notifications')
-  @ApiOperation({ summary: 'Lister les notifications (proxy service Render)' })
+  @ApiOperation({
+    summary:
+      'Lister les notifications du service Render filtrées par service Endoscopie',
+    description:
+      'Proxy GET /notifications du service notification, puis filtre celles ' +
+      'dont payload.sourceServiceId, emitter ou tout champ contient ENDOSCOPIE_SERVICE_ID.',
+  })
   @ApiQuery({
     name: 'status',
     required: false,
-    description: 'Ex: ENVOYE, PENDING, LU',
+    description: 'Statut côté service notification (ex. ENVOYE, PENDING, LU)',
     example: 'ENVOYE',
   })
-  listNotifications(@Query('status') status = 'ENVOYE') {
-    return this.appService.listNotifications(status);
+  @ApiQuery({
+    name: 'serviceId',
+    required: false,
+    description: 'UUID service Endoscopie CHU (défaut: ENDOSCOPIE_SERVICE_ID)',
+    example: '38f39d38-152e-495b-8c48-28937750d9eb',
+  })
+  listNotifications(
+    @Query('status') status = 'ENVOYE',
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.listNotifications(status, serviceId);
   }
 
   @Post('api/notifications')
@@ -300,5 +318,76 @@ export class AppController {
   @ApiBody({ type: SaveChecklistAvantDto })
   async saveChecklistAvant(@Body() data: SaveChecklistAvantDto) {
     return this.appService.saveChecklistAvant(data);
+  }
+
+  // ——— Operations ———
+  @Get('api/operations/:prescriptionId')
+  @ApiTags('Operations')
+  @ApiOperation({ summary: 'Récupérer les notes de l\'opération endoscopie' })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getOperation(
+    @Param('prescriptionId') prescriptionId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getOperation(prescriptionId, serviceId);
+  }
+
+  @Post('api/operations')
+  @ApiTags('Operations')
+  @ApiOperation({ summary: '[POST] Enregistrer les notes de l\'opération endoscopie', operationId: 'saveOperation' })
+  @ApiBody({ type: SaveOperationDto })
+  async saveOperation(@Body() data: SaveOperationDto) {
+    return this.appService.saveOperation(data);
+  }
+
+  // ——— Checklist Après ———
+  @Get('api/checklists/apres/:prescriptionId')
+  @ApiTags('Checklists')
+  @ApiOperation({ summary: 'Récupérer la checklist après endoscopie' })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getChecklistApres(
+    @Param('prescriptionId') prescriptionId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getChecklistApres(prescriptionId, serviceId);
+  }
+
+  @Post('api/checklists/apres')
+  @ApiTags('Checklists')
+  @ApiOperation({ summary: '[POST] Enregistrer la checklist après endoscopie', operationId: 'saveChecklistApres' })
+  @ApiBody({ type: SaveChecklistApresDto })
+  async saveChecklistApres(@Body() data: SaveChecklistApresDto) {
+    return this.appService.saveChecklistApres(data);
+  }
+
+  // ——— Résultats ———
+  @Get('api/resultats')
+  @ApiTags('Resultats')
+  @ApiOperation({ summary: 'Lister tous les résultats d\'endoscopie' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async listResultats(@Query('serviceId') serviceId?: string) {
+    return this.appService.listResultats(serviceId);
+  }
+
+  @Get('api/resultats/:prescriptionId')
+  @ApiTags('Resultats')
+  @ApiOperation({ summary: 'Récupérer les résultats de l\'endoscopie' })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getResultat(
+    @Param('prescriptionId') prescriptionId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getResultat(prescriptionId, serviceId);
+  }
+
+  @Post('api/resultats')
+  @ApiTags('Resultats')
+  @ApiOperation({ summary: '[POST] Enregistrer les résultats de l\'endoscopie', operationId: 'saveResultat' })
+  @ApiBody({ type: SaveResultatDto })
+  async saveResultat(@Body() data: SaveResultatDto) {
+    return this.appService.saveResultat(data);
   }
 }

@@ -526,8 +526,131 @@ export class AppService {
     });
   }
 
-  listNotifications(status = 'ENVOYE') {
-    return this.notificationService.listNotifications(status);
+  async getOperation(
+    prescriptionId: string,
+    serviceIdOverride?: string,
+  ) {
+    return this.prisma.operationEndoscopie.findFirst({
+      where: { prescriptionId, ...this.scope(serviceIdOverride) },
+      include: { patient: true },
+    });
+  }
+
+  async saveOperation(data: any) {
+    if (!data.prescriptionId) {
+      throw new Error(
+        'prescriptionId est obligatoire pour enregistrer les notes d\'opération',
+      );
+    }
+
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
+
+    const operationData = {
+      medicalNotes: data.medicalNotes || '',
+      voiceTranscripts: data.voiceTranscripts || [],
+    };
+
+    return this.prisma.operationEndoscopie.upsert({
+      where: { prescriptionId: data.prescriptionId },
+      update: operationData,
+      create: {
+        ...operationData,
+        serviceId,
+        prescriptionId: data.prescriptionId,
+        patientId: data.patientId,
+      },
+    });
+  }
+
+  async getChecklistApres(
+    prescriptionId: string,
+    serviceIdOverride?: string,
+  ) {
+    return this.prisma.checklistApres.findFirst({
+      where: { prescriptionId, ...this.scope(serviceIdOverride) },
+      include: { patient: true },
+    });
+  }
+
+  async saveChecklistApres(data: any) {
+    if (!data.prescriptionId) {
+      throw new Error('prescriptionId est obligatoire pour la checklist après endoscopie');
+    }
+
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
+
+    const checklistData = {
+      confirmationEtiquetage: data.confirmationEtiquetage,
+      prescriptionsPostActe: data.prescriptionsPostActe,
+      remarques: data.remarques,
+      estValide: data.estValide || false,
+    };
+
+    return this.prisma.checklistApres.upsert({
+      where: { prescriptionId: data.prescriptionId },
+      update: checklistData,
+      create: {
+        ...checklistData,
+        serviceId,
+        prescriptionId: data.prescriptionId,
+        patientId: data.patientId,
+      },
+    });
+  }
+
+  async getResultat(
+    prescriptionId: string,
+    serviceIdOverride?: string,
+  ) {
+    return this.prisma.resultatEndoscopie.findFirst({
+      where: { prescriptionId, ...this.scope(serviceIdOverride) },
+      include: { patient: true },
+    });
+  }
+
+  async saveResultat(data: any) {
+    if (!data.prescriptionId) {
+      throw new Error('prescriptionId est obligatoire pour enregistrer les résultats');
+    }
+
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
+
+    const resultatData = {
+      reportText: data.reportText,
+      mainDiagnosis: data.mainDiagnosis,
+      observations: data.observations,
+      conclusion: data.conclusion,
+      complication: data.complication,
+      biopsy: data.biopsy,
+      followUp: data.followUp,
+      doctorName: data.doctorName,
+    };
+
+    return this.prisma.resultatEndoscopie.upsert({
+      where: { prescriptionId: data.prescriptionId },
+      update: resultatData,
+      create: {
+        ...resultatData,
+        serviceId,
+        prescriptionId: data.prescriptionId,
+        patientId: data.patientId,
+      },
+    });
+  }
+
+  async listResultats(serviceIdOverride?: string) {
+    return this.prisma.resultatEndoscopie.findMany({
+      where: this.scope(serviceIdOverride),
+      include: {
+        patient: true,
+        prescription: true,
+      },
+      orderBy: { dateCreation: 'desc' },
+    });
+  }
+
+  listNotifications(status = 'ENVOYE', serviceId?: string) {
+    return this.notificationService.listNotifications(status, serviceId);
   }
 
   createNotification(payload: CreateNotificationPayload) {
@@ -538,6 +661,7 @@ export class AppService {
     return this.notificationService.checkHealth().then((health) => ({
       notificationApiUrl: getNotificationApiUrl(),
       webhookReceiveUrl: getNotificationWebhookUrl(),
+      endoscopieServiceId: getEndoscopieServiceId(),
       ...health,
     }));
   }

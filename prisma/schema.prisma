@@ -21,6 +21,9 @@ model Patient {
   rendezVous           RendezVous[]
   dossiersCPA          DossierCPA[]
   checklistsAvant      ChecklistAvant[]
+  operationEndoscopies OperationEndoscopie[]
+  checklistsApres      ChecklistApres[]
+  resultatsEndoscopie  ResultatEndoscopie[]
 }
 
 model Medecin {
@@ -65,6 +68,9 @@ model Prescription {
   rendezVous              RendezVous?
   dossierCPA              DossierCPA?
   checklistAvant          ChecklistAvant?
+  operationEndoscopie     OperationEndoscopie?
+  checklistApres          ChecklistApres?
+  resultatEndoscopie      ResultatEndoscopie?
 
   @@index([medecinId])
   @@index([patientId])
@@ -143,6 +149,71 @@ model ChecklistAvant {
   
   observations              String?        @db.Text
   estValide                 Boolean        @default(false)
+  dateCreation              DateTime       @default(now())
+  dateModification          DateTime       @updatedAt
+
+  @@index([patientId])
+  @@index([prescriptionId])
+  @@index([serviceId])
+}
+
+model OperationEndoscopie {
+  id                        String         @id @default(uuid())
+  serviceId                 String
+  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
+  prescriptionId            String         @unique
+  patient                   Patient        @relation(fields: [patientId], references: [id])
+  patientId                 String
+  
+  medicalNotes              String?        @db.Text
+  voiceTranscripts          Json?
+  
+  dateCreation              DateTime       @default(now())
+  dateModification          DateTime       @updatedAt
+
+  @@index([patientId])
+  @@index([prescriptionId])
+  @@index([serviceId])
+}
+
+model ChecklistApres {
+  id                        String         @id @default(uuid())
+  serviceId                 String
+  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
+  prescriptionId            String         @unique
+  patient                   Patient        @relation(fields: [patientId], references: [id])
+  patientId                 String
+  
+  confirmationEtiquetage    String?
+  prescriptionsPostActe     String?
+  remarques                 String?        @db.Text
+  estValide                 Boolean        @default(false)
+  
+  dateCreation              DateTime       @default(now())
+  dateModification          DateTime       @updatedAt
+
+  @@index([patientId])
+  @@index([prescriptionId])
+  @@index([serviceId])
+}
+
+model ResultatEndoscopie {
+  id                        String         @id @default(uuid())
+  serviceId                 String
+  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
+  prescriptionId            String         @unique
+  patient                   Patient        @relation(fields: [patientId], references: [id])
+  patientId                 String
+  
+  reportText                String?        @db.Text
+  mainDiagnosis             String?
+  observations              String?        @db.Text
+  conclusion                String?        @db.Text
+  complication              String?
+  biopsy                    String?
+  followUp                  String?
+  doctorName                String?
+  
   dateCreation              DateTime       @default(now())
   dateModification          DateTime       @updatedAt
 

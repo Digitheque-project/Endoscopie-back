@@ -3,6 +3,7 @@ import { getEndoscopieServiceId } from '../config/endoscopie-service';
 import { getNotificationApiUrl } from '../config/notification-service';
 import { CreateNotificationPayload } from './notification.types';
 import { NotificationInboxService } from './notification-inbox.service';
+import { filterNotificationsByServiceId } from './notification-filter.util';
 
 @Injectable()
 export class NotificationService {
@@ -41,7 +42,16 @@ export class NotificationService {
     }
   }
 
-  async listNotifications(status = 'ENVOYE'): Promise<unknown> {
+  async listNotifications(
+    status = 'ENVOYE',
+    serviceId?: string,
+  ): Promise<{
+    serviceId: string;
+    status: string;
+    total: number;
+    items: Record<string, unknown>[];
+  }> {
+    const sid = getEndoscopieServiceId(serviceId);
     const res = await fetch(
       `${this.baseUrl}/notifications?status=${encodeURIComponent(status)}`,
     );
@@ -49,7 +59,20 @@ export class NotificationService {
       const text = await res.text();
       throw new Error(`GET /notifications ${res.status}: ${text}`);
     }
-    return res.json();
+    const data = await res.json();
+    const list = (
+      Array.isArray(data)
+        ? data
+        : ((data as { items?: unknown[] })?.items ?? [])
+    ) as Record<string, unknown>[];
+
+    const items = filterNotificationsByServiceId(list, sid);
+    return {
+      serviceId: sid,
+      status,
+      total: items.length,
+      items,
+    };
   }
 
   async checkHealth(): Promise<{ ok: boolean; status?: number }> {
@@ -67,6 +90,12 @@ export class NotificationService {
   ): void {
     if (!this.inbox) return;
     try {
+      const mergedPayload = {
+        ...(fallback.payload ?? {}),
+        ...((remote.payload as Record<string, unknown>) ?? {}),
+        sourceServiceId: getEndoscopieServiceId(),
+        sourceServiceName: 'Unité Endoscopie',
+      };
       this.inbox.receive(
         {
           id: remote.id as string | undefined,
@@ -74,12 +103,13 @@ export class NotificationService {
           motif: (remote.motif as string) ?? fallback.motif,
           urgence: (remote.urgence as number) ?? fallback.urgence,
           statut: (remote.statut as string) ?? 'ENVOYE',
+          emitter: fallback.emitter,
           emetteur_name:
             (remote.emetteur_name as string) ?? fallback.emitterName,
           patientId: (remote.patientId as string) ?? fallback.patientId,
           entiteRefType: fallback.entiteRefType,
           entiteRefId: fallback.entiteRefId,
-          payload: (remote.payload as Record<string, unknown>) ?? fallback.payload,
+          payload: mergedPayload,
           created_at: remote.created_at as string | undefined,
         },
         { source: 'endoscopie-back' },
@@ -121,6 +151,8 @@ export class NotificationService {
       entiteRefId: prescription.id,
       channels: ['INTERNAL', 'SOUND'],
       payload: {
+        sourceServiceId: getEndoscopieServiceId(),
+        sourceServiceName: 'Unité Endoscopie',
         patientName,
         medecinName,
         motif: prescription.motif ?? '',

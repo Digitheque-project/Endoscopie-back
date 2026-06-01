@@ -52,6 +52,14 @@ export class NotificationInboxController {
   ) {
     this.inbox.assertWebhookSecret(webhookSecret);
     const item = this.inbox.receive(body, { source: 'service-notification' });
+    if (!item) {
+      return {
+        ok: true,
+        ignored: true,
+        reason: 'Notification sans ENDOSCOPIE_SERVICE_ID',
+        webhookUrl: this.inbox.getPublicWebhookUrl(),
+      };
+    }
     return {
       ok: true,
       received: item,
