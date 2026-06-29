@@ -16,6 +16,7 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { AppService } from './app.service';
+import { Roles } from './auth/roles.decorator';
 import { CreateRendezVousDto } from './dto/create-rendezvous.dto';
 import { CreateSalleDto } from './dto/create-salle.dto';
 import { SaveChecklistAvantDto } from './dto/save-checklist-avant.dto';
@@ -29,6 +30,7 @@ import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { SaveConfirmationPlanificationDto } from './dto/save-confirmation-planification.dto';
+import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
 
 @Controller()
 export class AppController {
@@ -262,8 +264,9 @@ export class AppController {
   }
 
   @Post('api/dossiers-cpa')
+  @Roles('MAJOR')
   @ApiTags('Dossiers CPA')
-  @ApiOperation({ summary: '[POST] Créer un dossier CPA', operationId: 'createDossierCpa' })
+  @ApiOperation({ summary: '[POST] Créer un dossier CPA (réservé au rôle Major)', operationId: 'createDossierCpa' })
   @ApiBody({ type: CreateDossierCpaDto })
   async createDossierCpa(@Body() data: CreateDossierCpaDto) {
     return this.appService.createDossierCpa(data);
@@ -335,6 +338,20 @@ export class AppController {
   @ApiOkResponse({ description: 'Rendez-vous créé ou mis à jour' })
   async createRendezVous(@Body() data: CreateRendezVousDto) {
     return this.appService.createRendezVous(data);
+  }
+
+  @Patch('api/rendezvous/:id')
+  @ApiTags('Rendez-vous')
+  @ApiOperation({ summary: '[PATCH] Mettre à jour partiellement un rendez-vous (décision anesthésie, statut)', operationId: 'updateRendezVous' })
+  @ApiParam({ name: 'id', description: 'UUID du rendez-vous' })
+  @ApiBody({ type: UpdateRendezVousDto })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async updateRendezVous(
+    @Param('id') id: string,
+    @Body() data: UpdateRendezVousDto,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.updateRendezVous(id, data, serviceId);
   }
 
   // ——— Salles ———

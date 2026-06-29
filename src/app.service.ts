@@ -7,7 +7,9 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
 import {
+  getAccueilApiUrl,
   getChuApiUrl,
+  getEndoscopieChuId,
   getEndoscopieServiceId,
 } from './config/endoscopie-service';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
@@ -16,6 +18,7 @@ import { CreatePatientDto } from './dto/create-patient.dto';
 import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
+import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
 import { NotificationService } from './notification/notification.service';
 import {
   getNotificationApiUrl,
@@ -115,6 +118,7 @@ export class AppService {
       include: {
         patient: true,
         medecinPrescripteur: true,
+        rendezVous: true,
       },
       orderBy: {
         dateDemande: 'desc',
@@ -132,7 +136,7 @@ export class AppService {
         checklistAvant: true,
         checklistApres: true,
         resultatEndoscopie: true,
-        rendezVous: true,
+        rendezVous: { include: { salle: true } },
       },
     });
     if (!prescription) {
@@ -204,6 +208,29 @@ export class AppService {
     });
   }
 
+/** Récupère un patient depuis l'API Accueil (registre CHU) par son id. */
+  private async fetchAccueilPatient(patientId: string): Promise<{
+    nom?: string;
+    prenom?: string;
+    dateNaissance?: string | null;
+    sexe?: string | null;
+    cin?: string | null;
+    profession?: string | null;
+    adresse?: string | null;
+    telephone?: string | null;
+    contactUrgence?: string | null;
+    priseEnChargeId?: string | null;
+  } | null> {
+    try {
+      const url = `${getAccueilApiUrl()}/accueil/patients/${encodeURIComponent(patientId)}?chuId=${getEndoscopieChuId()}`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return (await res.json()) as Record<string, unknown> as any;
+    } catch {
+      return null;
+    }
+  }
+
   async createPrescription(data: CreatePrescriptionDto) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
 
@@ -214,22 +241,55 @@ export class AppService {
       throw new BadRequestException('typeExamen est obligatoire');
     }
 
-    // Si le patient n'existe pas dans la base, on le crée automatiquement
-    // (cas: l'appelant fournit un patientId externe).
+    // Si le patient n'existe pas encore localement, on tente de récupérer ses
+    // vraies informations depuis l'API Accueil avant de retomber sur un
+    // placeholder « INCONNU ».
+    const existingPatient = await this.prisma.patient.findUnique({
+      where: { id: data.patientId },
+    });
+
+    let patientCreateData: Prisma.PatientCreateInput = {
+      id: data.patientId,
+      nom: 'INCONNU',
+      prenom: 'PATIENT',
+      dateNaissance: null,
+      sexe: null,
+      groupeSanguin: null,
+      poids: null,
+      antecedentsMedicaux: null,
+    };
+
+    if (!existingPatient) {
+      const accueilPatient = await this.fetchAccueilPatient(data.patientId);
+      if (accueilPatient) {
+        patientCreateData = {
+          id: data.patientId,
+          nom: accueilPatient.nom || 'INCONNU',
+          prenom: accueilPatient.prenom || 'PATIENT',
+          dateNaissance: accueilPatient.dateNaissance
+            ? new Date(accueilPatient.dateNaissance)
+            : null,
+          sexe:
+            accueilPatient.sexe === 'FEMALE'
+              ? 'F'
+              : accueilPatient.sexe === 'MALE'
+                ? 'M'
+                : null,
+          cin: accueilPatient.cin || null,
+          profession: accueilPatient.profession || null,
+          adresse: accueilPatient.adresse || null,
+          telephone: accueilPatient.telephone || null,
+          contactUrgence: accueilPatient.contactUrgence || null,
+          priseEnChargeId: accueilPatient.priseEnChargeId || null,
+        };
+      }
+    }
+
     const [patient, medecin] = await Promise.all([
       this.prisma.patient.upsert({
         where: { id: data.patientId },
         update: {},
-        create: {
-          id: data.patientId,
-          nom: 'INCONNU',
-          prenom: 'PATIENT',
-          dateNaissance: null,
-          sexe: null,
-          groupeSanguin: null,
-          poids: null,
-          antecedentsMedicaux: null,
-        },
+        create: patientCreateData,
       }),
       this.prisma.medecin.upsert({
         where: { id: data.medecinId },
@@ -329,7 +389,22 @@ export class AppService {
     if (!patient) {
       throw new NotFoundException(`Patient ${id} introuvable`);
     }
-    return patient;
+
+    let priseEnCharge: Record<string, unknown> | null = null;
+    if (patient.priseEnChargeId) {
+      try {
+        const res = await fetch(
+          `${getChuApiUrl()}/service-chu/prise-en-charge/${encodeURIComponent(patient.priseEnChargeId)}`,
+        );
+        if (res.ok) {
+          priseEnCharge = (await res.json()) as Record<string, unknown>;
+        }
+      } catch {
+        priseEnCharge = null;
+      }
+    }
+
+    return { ...patient, priseEnCharge };
   }
 
   async createPatient(data: CreatePatientDto) {
@@ -414,7 +489,7 @@ export class AppService {
 
   async createDossierCpa(data: CreateDossierCpaDto) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
-    return this.prisma.dossierCPA.create({
+    const dossier = await this.prisma.dossierCPA.create({
       data: {
         serviceId,
         patientId: data.patientId,
@@ -430,6 +505,19 @@ export class AppService {
         anesthesiste: true,
       },
     });
+
+    if (data.prescriptionId) {
+      await this.prisma.rendezVous.updateMany({
+        where: { prescriptionId: data.prescriptionId, serviceId },
+        data: { statut: 'CPA demandée' },
+      });
+      await this.prisma.prescription.updateMany({
+        where: { id: data.prescriptionId, serviceId },
+        data: { statut: 'CPA demandée' },
+      });
+    }
+
+    return dossier;
   }
 
   async updateDossierCpa(
@@ -720,6 +808,61 @@ export class AppService {
       console.error('Erreur lors de la création du rendez-vous:', error);
       throw error;
     }
+  }
+
+  async updateRendezVous(
+    id: string,
+    data: UpdateRendezVousDto,
+    serviceIdOverride?: string,
+  ) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const existing = await this.prisma.rendezVous.findFirst({
+      where: { id, serviceId },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Rendez-vous ${id} introuvable`);
+    }
+
+    const updated = await this.prisma.rendezVous.update({
+      where: { id },
+      data: {
+        ...(data.typeAnesthesie !== undefined && {
+          typeAnesthesie: data.typeAnesthesie,
+        }),
+        ...(data.statut !== undefined && { statut: data.statut }),
+        ...(data.notesCliniques !== undefined && {
+          notesCliniques: data.notesCliniques,
+        }),
+        ...(data.dateHeureDebut !== undefined && {
+          dateHeureDebut: new Date(data.dateHeureDebut),
+        }),
+        ...(data.dateHeureFin !== undefined && {
+          dateHeureFin: data.dateHeureFin ? new Date(data.dateHeureFin) : null,
+        }),
+      },
+      include: {
+        patient: true,
+        medecin: true,
+        salle: true,
+        prescription: true,
+      },
+    });
+
+    // Reflète l'étape de la décision d'anesthésie sur la prescription elle-même,
+    // pour qu'elle réapparaisse au bon statut dans le Fil de prescription du Major.
+    const CASCADE_STATUTS = ['Décision rendue', 'Confirmé'];
+    if (
+      existing.prescriptionId &&
+      data.statut !== undefined &&
+      CASCADE_STATUTS.includes(data.statut)
+    ) {
+      await this.prisma.prescription.updateMany({
+        where: { id: existing.prescriptionId, serviceId },
+        data: { statut: data.statut },
+      });
+    }
+
+    return updated;
   }
 
   async createSalle(data: any) {

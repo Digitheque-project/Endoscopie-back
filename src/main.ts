@@ -20,6 +20,8 @@ async function bootstrap() {
       'Authorization',
       'x-webhook-secret',
       'Cache-Control',
+      'x-user-role',
+      'x-medecin-id',
     ],
     exposedHeaders: ['Content-Type'],
   });

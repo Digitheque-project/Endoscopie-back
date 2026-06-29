@@ -17,6 +17,12 @@ model Patient {
   groupeSanguin        String?
   poids                Float?
   antecedentsMedicaux  String?
+  cin                  String?
+  profession           String?
+  adresse              String?
+  telephone            String?
+  contactUrgence       String?
+  priseEnChargeId      String?
   checklistsApres      ChecklistApres[]
   checklistsAvant      ChecklistAvant[]
   dossiersCPA          DossierCPA[]
