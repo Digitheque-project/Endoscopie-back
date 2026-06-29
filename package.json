@@ -23,6 +23,7 @@
     "db:seed-mysql": "node prisma/seed-mysql.js",
     "db:migrate-to-render": "node prisma/migrate-mysql-to-postgres.js",
     "db:sync-all": "node prisma/seed-mysql.js && node prisma/migrate-mysql-to-postgres.js",
+    "generate-prescriptions": "ts-node prisma/generate-prescriptions.ts",
     "db:count": "node prisma/count-records.js"
   },
   "prisma": {

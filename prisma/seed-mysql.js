@@ -116,7 +116,32 @@ async function main() {
     );
   }
 
-  const typesExamen = ['Coloscopie', 'Gastroscopie', 'Echo-endoscopie', 'CPRE', 'Sigmoidoscopie'];
+  const typesExamen = [
+    'Fibroscopie digestive haute',
+    'Injection de colle biologique',
+    'Dilatation oesophagienne',
+    'Extraction de corps étranger',
+    'Coloscopie',
+    'Rectosigmoidoscopie',
+  ];
+
+  for (const typeName of typesExamen) {
+    await conn.query(
+      'INSERT IGNORE INTO EndoscopyExamType (id, name, code, description) VALUES (?, ?, ?, ?)',
+      [
+        randomUUID(),
+        typeName,
+        typeName
+          .normalize('NFD')
+          .replace(/\p{Diacritic}/gu, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_|_$/g, ''),
+        typeName,
+      ],
+    );
+  }
+
   const priorites = ['Standard', 'Urgent', 'STAT'];
   const motifs = [
     'Dépistage cancer colorectal',

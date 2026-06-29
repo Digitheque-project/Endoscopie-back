@@ -52,27 +52,47 @@ export class NotificationService {
     items: Record<string, unknown>[];
   }> {
     const sid = getEndoscopieServiceId(serviceId);
-    const res = await fetch(
-      `${this.baseUrl}/notifications?status=${encodeURIComponent(status)}`,
-    );
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`GET /notifications ${res.status}: ${text}`);
-    }
-    const data = await res.json();
-    const list = (
-      Array.isArray(data)
-        ? data
-        : ((data as { items?: unknown[] })?.items ?? [])
-    ) as Record<string, unknown>[];
+    try {
+      const res = await fetch(
+        `${this.baseUrl}/notifications?status=${encodeURIComponent(status)}`,
+      );
 
-    const items = filterNotificationsByServiceId(list, sid);
-    return {
-      serviceId: sid,
-      status,
-      total: items.length,
-      items,
-    };
+      // If remote service returns non-OK, log and return empty list instead of throwing
+      if (!res.ok) {
+        const text = await res.text().catch(() => '<no-body>');
+        this.logger.warn(`GET /notifications ${res.status}: ${text}`);
+        return { serviceId: sid, status, total: 0, items: [] };
+      }
+
+      // Parse body defensively: try json, fallback to text and handle parse errors
+      let data: unknown;
+      try {
+        data = await res.json();
+      } catch (parseErr) {
+        const raw = await res.text().catch(() => '');
+        this.logger.warn(
+          `Failed to parse /notifications response JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}; rawLength=${raw.length}`,
+        );
+        return { serviceId: sid, status, total: 0, items: [] };
+      }
+
+      const list = (
+        Array.isArray(data)
+          ? data
+          : ((data as { items?: unknown[] })?.items ?? [])
+      ) as Record<string, unknown>[];
+
+      const items = filterNotificationsByServiceId(list, sid);
+      return {
+        serviceId: sid,
+        status,
+        total: items.length,
+        items,
+      };
+    } catch (err) {
+      this.logger.warn(`listNotifications failed: ${err instanceof Error ? err.message : String(err)}`);
+      return { serviceId: sid, status, total: 0, items: [] };
+    }
   }
 
   async checkHealth(): Promise<{ ok: boolean; status?: number }> {

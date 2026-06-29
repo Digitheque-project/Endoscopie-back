@@ -28,6 +28,7 @@ import { CreatePatientDto } from './dto/create-patient.dto';
 import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
+import { SaveConfirmationPlanificationDto } from './dto/save-confirmation-planification.dto';
 
 @Controller()
 export class AppController {
@@ -217,6 +218,22 @@ export class AppController {
     return this.appService.updatePrescription(id, data);
   }
 
+  @Get('api/archives')
+  @ApiTags('Archives')
+  @ApiOperation({ summary: 'Rechercher les dossiers patients archivés (prescription + CPA + checklists + résultat)' })
+  @ApiQuery({ name: 'nom', required: false, description: 'Recherche par nom ou prénom du patient' })
+  @ApiQuery({ name: 'dateFrom', required: false, description: 'Date de début (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'dateTo', required: false, description: 'Date de fin (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getArchives(
+    @Query('nom') nom?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getArchives({ nom, dateFrom, dateTo }, serviceId);
+  }
+
   // ——— Dossiers CPA ———
   @Get('api/dossiers-cpa')
   @ApiTags('Dossiers CPA')
@@ -265,12 +282,50 @@ export class AppController {
   }
 
   // ——— Rendez-vous ———
+  @Get('api/rendezvous/jour/:date')
+  @ApiTags('Rendez-vous')
+  @ApiOperation({ summary: 'Lister les rendez-vous du jour' })
+  @ApiParam({ name: 'date', description: 'Date au format YYYY-MM-DD' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getRendezVousJour(
+    @Param('date') date: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getRendezVousJour(date, serviceId);
+  }
+
+  @Get('api/rendezvous/counts-month')
+  @ApiTags('Rendez-vous')
+  @ApiOperation({ summary: 'Compter les rendez-vous par jour du mois' })
+  @ApiQuery({ name: 'year', required: true, example: 2026 })
+  @ApiQuery({ name: 'month', required: true, example: 6 })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getRendezVousCountsByMonth(
+    @Query('year') year: string,
+    @Query('month') month: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getRendezVousCountsByMonth(
+      parseInt(year, 10),
+      parseInt(month, 10),
+      serviceId,
+    );
+  }
+
   @Get('api/rendezvous')
   @ApiTags('Rendez-vous')
   @ApiOperation({ summary: 'Lister les rendez-vous' })
   @ApiQuery({ name: 'serviceId', required: false })
   async getRendezVous(@Query('serviceId') serviceId?: string) {
     return this.appService.getRendezVous(serviceId);
+  }
+
+  @Get('api/rendezvous/procedure-counts-today')
+  @ApiTags('Rendez-vous')
+  @ApiOperation({ summary: 'Compter les procédures du jour par type' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getProcedureCountsToday(@Query('serviceId') serviceId?: string) {
+    return this.appService.getProcedureCountsToday(serviceId);
   }
 
   @Post('api/rendezvous')
@@ -362,6 +417,14 @@ export class AppController {
     return this.appService.saveChecklistApres(data);
   }
 
+  @Get('api/checklists/progress-today')
+  @ApiTags('Checklists')
+  @ApiOperation({ summary: 'Progression des checklists avant/après pour les rendez-vous du jour' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getChecklistsProgressToday(@Query('serviceId') serviceId?: string) {
+    return this.appService.getChecklistsProgressToday(serviceId);
+  }
+
   // ——— Résultats ———
   @Get('api/resultats')
   @ApiTags('Resultats')
@@ -389,5 +452,37 @@ export class AppController {
   @ApiBody({ type: SaveResultatDto })
   async saveResultat(@Body() data: SaveResultatDto) {
     return this.appService.saveResultat(data);
+  }
+
+  // ——— Confirmation & Planification ———
+  @Post('api/confirmations-planification')
+  @ApiTags('Confirmations & Planification')
+  @ApiOperation({
+    summary: '[POST] Sauvegarder une confirmation de planification complète',
+    operationId: 'saveConfirmationPlanification',
+  })
+  @ApiBody({ type: SaveConfirmationPlanificationDto })
+  async saveConfirmationPlanification(@Body() data: SaveConfirmationPlanificationDto) {
+    return this.appService.saveConfirmationPlanification(data);
+  }
+
+  @Get('api/confirmations-planification')
+  @ApiTags('Confirmations & Planification')
+  @ApiOperation({ summary: 'Lister toutes les confirmations de planification' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async listConfirmationsPlanification(@Query('serviceId') serviceId?: string) {
+    return this.appService.listConfirmationsPlanification(serviceId);
+  }
+
+  @Get('api/confirmations-planification/:prescriptionId')
+  @ApiTags('Confirmations & Planification')
+  @ApiOperation({ summary: 'Récupérer la confirmation de planification d\'une prescription' })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getConfirmationPlanification(
+    @Param('prescriptionId') prescriptionId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getConfirmationPlanification(prescriptionId, serviceId);
   }
 }

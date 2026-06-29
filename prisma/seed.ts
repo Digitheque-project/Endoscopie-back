@@ -114,9 +114,39 @@ async function main() {
     console.log(`  ✓ ${pat.prenom} ${pat.nom} (${pat.sexe}, ${pat.groupeSanguin}, ${pat.poids}kg)`);
   }
 
-  // ✅ CRÉER LES PRESCRIPTIONS
+  // ✅ CRÉER LES TYPES D'EXAMEN
+  console.log('\n📋 Création des types d\'examen...');
+  const typesExamen = [
+    'Fibroscopie digestive haute',
+    'Injection de colle biologique',
+    'Dilatation oesophagienne',
+    'Extraction de corps étranger',
+    'Coloscopie',
+    'Rectosigmoidoscopie',
+  ];
+
+  const examTypeData = typesExamen.map((name) => ({
+    name,
+    code: name
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_|_$/g, ''),
+    description: name,
+  }));
+
+  await prisma.endoscopyExamType.createMany({
+    data: examTypeData,
+    skipDuplicates: true,
+  });
+
+  const examTypes = await prisma.endoscopyExamType.findMany({
+    where: { name: { in: typesExamen } },
+  });
+  const examTypeMap = new Map(examTypes.map((exam) => [exam.name, exam.id]));
+
   console.log('\n📋 Création des prescriptions...');
-  const typesExamen = ['Coloscopie', 'Gastroscopie', 'Echo-endoscopie', 'CPRE', 'Sigmoidoscopie'];
   const priorites = ['Standard', 'Urgent', 'STAT'];
   const motifs = [
     'Dépistage cancer colorectal',
@@ -150,6 +180,7 @@ async function main() {
           patientId: patient.id,
           medecinId: randomMedecin.id,
           typeExamen: randomType,
+          typeExamenRefId: examTypeMap.get(randomType) ?? null,
           motif: randomMotif,
           priorite: randomPriorite,
           statut: 'A planifier',

@@ -5,10 +5,11 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Patient {
-  id                   String         @id @default(uuid())
+  id                   String                @id @default(uuid())
   nom                  String
   prenom               String
   dateNaissance        DateTime?
@@ -16,85 +17,90 @@ model Patient {
   groupeSanguin        String?
   poids                Float?
   antecedentsMedicaux  String?
-  
+  checklistsApres      ChecklistApres[]
+  checklistsAvant      ChecklistAvant[]
+  dossiersCPA          DossierCPA[]
+  operationEndoscopies OperationEndoscopie[]
   prescriptions        Prescription[]
   rendezVous           RendezVous[]
-  dossiersCPA          DossierCPA[]
-  checklistsAvant      ChecklistAvant[]
-  operationEndoscopies OperationEndoscopie[]
-  checklistsApres      ChecklistApres[]
   resultatsEndoscopie  ResultatEndoscopie[]
 }
 
 model Medecin {
-  id                   String         @id @default(uuid())
-  nom                  String
-  prenom               String
-  specialite           String?
-  role                 String?
-
-  prescriptions        Prescription[]
-  rendezVous           RendezVous[]
-  dossiersCPA          DossierCPA[]
+  id            String         @id @default(uuid())
+  nom           String
+  prenom        String
+  specialite    String?
+  role          String?
+  dossiersCPA   DossierCPA[]
+  prescriptions Prescription[]
+  rendezVous    RendezVous[]
 }
 
 model Salle {
-  id                   String         @id @default(uuid())
-  serviceId            String
-  nom                  String
-  numero               String
-  capacite             Int            @default(1)
-  equipement           String?        @default("")
-  estActive            Boolean        @default(true)
-  
-  rendezVous           RendezVous[]
+  id         String       @id @default(uuid())
+  nom        String
+  numero     String
+  capacite   Int          @default(1)
+  equipement String?      @default("")
+  estActive  Boolean      @default(true)
+  serviceId  String
+  rendezVous RendezVous[]
 
   @@index([serviceId])
 }
 
 model Prescription {
-  id                      String         @id @default(uuid())
-  serviceId               String
-  patient                 Patient        @relation(fields: [patientId], references: [id])
-  patientId               String
-  medecinPrescripteur     Medecin        @relation(fields: [medecinId], references: [id])
-  medecinId               String
-  typeExamen              String
-  motif                   String?
-  priorite                String         @default("Standard")
-  statut                  String         @default("A planifier")
-  dateDemande             DateTime       @default(now())
-
-  rendezVous              RendezVous?
-  dossierCPA              DossierCPA?
-  checklistAvant          ChecklistAvant?
-  operationEndoscopie     OperationEndoscopie?
-  checklistApres          ChecklistApres?
-  resultatEndoscopie      ResultatEndoscopie?
+  id                  String               @id @default(uuid())
+  patientId           String
+  medecinId           String
+  typeExamen          String
+  motif               String?
+  priorite            String               @default("Standard")
+  statut              String               @default("A planifier")
+  dateDemande         DateTime             @default(now())
+  serviceId           String
+  typeExamenRefId     String?
+  checklistApres      ChecklistApres?
+  checklistAvant      ChecklistAvant?
+  dossierCPA          DossierCPA?
+  operationEndoscopie OperationEndoscopie?
+  medecinPrescripteur Medecin              @relation(fields: [medecinId], references: [id])
+  patient             Patient              @relation(fields: [patientId], references: [id])
+  typeExamenRef       EndoscopyExamType?   @relation(fields: [typeExamenRefId], references: [id])
+  rendezVous          RendezVous?
+  resultatEndoscopie  ResultatEndoscopie?
 
   @@index([medecinId])
   @@index([patientId])
   @@index([serviceId])
+  @@index([typeExamenRefId])
+}
+
+model EndoscopyExamType {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  code          String?        @unique
+  description   String?
+  prescriptions Prescription[]
 }
 
 model RendezVous {
-  id                      String         @id @default(uuid())
-  serviceId               String
-  patient                 Patient?       @relation(fields: [patientId], references: [id])
-  patientId               String?
-  prescription            Prescription?  @relation(fields: [prescriptionId], references: [id])
-  prescriptionId          String?        @unique
-  salle                   Salle?         @relation(fields: [salleId], references: [id])
-  salleId                 String?
-  medecin                 Medecin?       @relation(fields: [medecinId], references: [id])
-  medecinId               String?
-  dateHeureDebut          DateTime
-  dateHeureFin            DateTime?
-  typeAnesthesie          String?
-  statut                  String         @default("Prevu")
-  notesCliniques          String?
-
-
+  id             String        @id @default(uuid())
+  patientId      String?
+  prescriptionId String?       @unique
+  salleId        String?
+  medecinId      String?
+  dateHeureDebut DateTime
+  dateHeureFin   DateTime?
+  typeAnesthesie String?
+  statut         String        @default("Prevu")
+  notesCliniques String?
+  serviceId      String
+  medecin        Medecin?      @relation(fields: [medecinId], references: [id])
+  patient        Patient?      @relation(fields: [patientId], references: [id])
+  prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
+  salle          Salle?        @relation(fields: [salleId], references: [id])
 
   @@index([patientId])
   @@index([medecinId])
@@ -103,18 +109,18 @@ model RendezVous {
 }
 
 model DossierCPA {
-  id                String         @id @default(uuid())
-  serviceId         String
-  patient           Patient        @relation(fields: [patientId], references: [id])
-  patientId         String
-  prescription      Prescription?  @relation(fields: [prescriptionId], references: [id])
-  prescriptionId    String?        @unique
-  anesthesiste      Medecin?       @relation(fields: [anesthesisteId], references: [id])
-  anesthesisteId    String?
-  typeAnesthesie    String?
-  observations      String?
-  statut            String         @default("Brouillon")
-  dateValidation    DateTime?
+  id             String        @id @default(uuid())
+  patientId      String
+  prescriptionId String?       @unique
+  anesthesisteId String?
+  typeAnesthesie String?
+  observations   String?
+  statut         String        @default("Brouillon")
+  dateValidation DateTime?
+  serviceId      String
+  anesthesiste   Medecin?      @relation(fields: [anesthesisteId], references: [id])
+  patient        Patient       @relation(fields: [patientId], references: [id])
+  prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([anesthesisteId])
@@ -123,34 +129,30 @@ model DossierCPA {
 }
 
 model ChecklistAvant {
-  id                        String         @id @default(uuid())
-  serviceId                 String
-  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
-  prescriptionId            String         @unique
-  rendezVousId              String?
-  patient                   Patient        @relation(fields: [patientId], references: [id])
-  patientId                 String
-  
-  // Champs de la check-list (alignés sur l'UI)
-  identiteVerifiee          Boolean        @default(false)
-  procedureConfirmee        Boolean        @default(false)
-  materielDisponible        Boolean        @default(false)
-  risquesVerifies           Boolean        @default(false)
-  jeuneRespecte             Boolean        @default(false)
-  preparationAdequate       Boolean        @default(false)
-  validationCollegiale      Boolean        @default(false)
-  anticoagulantsArretes     Boolean        @default(false)
-  antibioprophylaxie        Boolean        @default(false)
-  tenueAppropriee           Boolean        @default(false)
-  
-  constantes_tension        String?
-  constantes_pouls          String?
-  constantes_saturation     String?
-  
-  observations              String?        @db.Text
-  estValide                 Boolean        @default(false)
-  dateCreation              DateTime       @default(now())
-  dateModification          DateTime       @updatedAt
+  id                    String       @id @default(uuid())
+  prescriptionId        String       @unique
+  serviceId             String
+  dateCreation          DateTime     @default(now())
+  dateModification      DateTime     @updatedAt
+  antibioprophylaxie    Boolean      @default(false)
+  anticoagulantsArretes Boolean      @default(false)
+  constantes_pouls      String?
+  constantes_saturation String?
+  constantes_tension    String?
+  estValide             Boolean      @default(false)
+  identiteVerifiee      Boolean      @default(false)
+  jeuneRespecte         Boolean      @default(false)
+  materielDisponible    Boolean      @default(false)
+  observations          String?
+  patientId             String
+  preparationAdequate   Boolean      @default(false)
+  procedureConfirmee    Boolean      @default(false)
+  rendezVousId          String?
+  risquesVerifies       Boolean      @default(false)
+  tenueAppropriee       Boolean      @default(false)
+  validationCollegiale  Boolean      @default(false)
+  patient               Patient      @relation(fields: [patientId], references: [id])
+  prescription          Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([prescriptionId])
@@ -158,18 +160,16 @@ model ChecklistAvant {
 }
 
 model OperationEndoscopie {
-  id                        String         @id @default(uuid())
-  serviceId                 String
-  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
-  prescriptionId            String         @unique
-  patient                   Patient        @relation(fields: [patientId], references: [id])
-  patientId                 String
-  
-  medicalNotes              String?        @db.Text
-  voiceTranscripts          Json?
-  
-  dateCreation              DateTime       @default(now())
-  dateModification          DateTime       @updatedAt
+  id               String       @id @default(uuid())
+  prescriptionId   String       @unique
+  serviceId        String
+  dateCreation     DateTime     @default(now())
+  dateModification DateTime     @updatedAt
+  medicalNotes     String?
+  patientId        String
+  voiceTranscripts Json?
+  patient          Patient      @relation(fields: [patientId], references: [id])
+  prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([prescriptionId])
@@ -177,20 +177,18 @@ model OperationEndoscopie {
 }
 
 model ChecklistApres {
-  id                        String         @id @default(uuid())
-  serviceId                 String
-  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
-  prescriptionId            String         @unique
-  patient                   Patient        @relation(fields: [patientId], references: [id])
-  patientId                 String
-  
-  confirmationEtiquetage    String?
-  prescriptionsPostActe     String?
-  remarques                 String?        @db.Text
-  estValide                 Boolean        @default(false)
-  
-  dateCreation              DateTime       @default(now())
-  dateModification          DateTime       @updatedAt
+  id                     String       @id @default(uuid())
+  prescriptionId         String       @unique
+  serviceId              String
+  dateCreation           DateTime     @default(now())
+  confirmationEtiquetage String?
+  dateModification       DateTime     @updatedAt
+  estValide              Boolean      @default(false)
+  patientId              String
+  prescriptionsPostActe  String?
+  remarques              String?
+  patient                Patient      @relation(fields: [patientId], references: [id])
+  prescription           Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([prescriptionId])
@@ -198,24 +196,22 @@ model ChecklistApres {
 }
 
 model ResultatEndoscopie {
-  id                        String         @id @default(uuid())
-  serviceId                 String
-  prescription              Prescription   @relation(fields: [prescriptionId], references: [id])
-  prescriptionId            String         @unique
-  patient                   Patient        @relation(fields: [patientId], references: [id])
-  patientId                 String
-  
-  reportText                String?        @db.Text
-  mainDiagnosis             String?
-  observations              String?        @db.Text
-  conclusion                String?        @db.Text
-  complication              String?
-  biopsy                    String?
-  followUp                  String?
-  doctorName                String?
-  
-  dateCreation              DateTime       @default(now())
-  dateModification          DateTime       @updatedAt
+  id               String       @id @default(uuid())
+  prescriptionId   String       @unique
+  serviceId        String
+  reportText       String?
+  doctorName       String?
+  dateCreation     DateTime     @default(now())
+  biopsy           String?
+  complication     String?
+  conclusion       String?
+  dateModification DateTime     @updatedAt
+  followUp         String?
+  mainDiagnosis    String?
+  observations     String?
+  patientId        String
+  patient          Patient      @relation(fields: [patientId], references: [id])
+  prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([prescriptionId])

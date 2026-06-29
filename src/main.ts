@@ -30,7 +30,7 @@ async function bootstrap() {
     .setVersion('1.0')
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document, {
+  SwaggerModule.setup('endoscopie/api/docs', app, document, {
     customSiteTitle: 'API Endoscopie',
     swaggerOptions: {
       docExpansion: 'list',
@@ -47,6 +47,6 @@ async function bootstrap() {
     process.env.RENDER_EXTERNAL_URL?.replace(/\/$/, '') ??
     `http://localhost:${port}`;
   console.log(`Application is running on: ${publicUrl}`);
-  console.log(`Swagger UI: ${publicUrl}/api/docs`);
+  console.log(`Swagger UI: ${publicUrl}/endoscopie/api/docs`);
 }
 bootstrap();
