@@ -20,14 +20,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "db:seed-mysql": "node prisma/seed-mysql.js",
-    "db:migrate-to-render": "node prisma/migrate-mysql-to-postgres.js",
-    "db:sync-all": "node prisma/seed-mysql.js && node prisma/migrate-mysql-to-postgres.js",
-    "generate-prescriptions": "ts-node prisma/generate-prescriptions.ts",
-    "db:count": "node prisma/count-records.js"
-  },
-  "prisma": {
-    "seed": "ts-node prisma/seed.ts"
+    "db:count": "node prisma/count-records.js",
+    "reseed:real-patients": "ts-node prisma/reseed-real-patients.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

@@ -8,30 +8,6 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model Patient {
-  id                   String                @id @default(uuid())
-  nom                  String
-  prenom               String
-  dateNaissance        DateTime?
-  sexe                 String?
-  groupeSanguin        String?
-  poids                Float?
-  antecedentsMedicaux  String?
-  cin                  String?
-  profession           String?
-  adresse              String?
-  telephone            String?
-  contactUrgence       String?
-  priseEnChargeId      String?
-  checklistsApres      ChecklistApres[]
-  checklistsAvant      ChecklistAvant[]
-  dossiersCPA          DossierCPA[]
-  operationEndoscopies OperationEndoscopie[]
-  prescriptions        Prescription[]
-  rendezVous           RendezVous[]
-  resultatsEndoscopie  ResultatEndoscopie[]
-}
-
 model Medecin {
   id            String         @id @default(uuid())
   nom           String
@@ -72,7 +48,6 @@ model Prescription {
   dossierCPA          DossierCPA?
   operationEndoscopie OperationEndoscopie?
   medecinPrescripteur Medecin              @relation(fields: [medecinId], references: [id])
-  patient             Patient              @relation(fields: [patientId], references: [id])
   typeExamenRef       EndoscopyExamType?   @relation(fields: [typeExamenRefId], references: [id])
   rendezVous          RendezVous?
   resultatEndoscopie  ResultatEndoscopie?
@@ -104,7 +79,6 @@ model RendezVous {
   notesCliniques String?
   serviceId      String
   medecin        Medecin?      @relation(fields: [medecinId], references: [id])
-  patient        Patient?      @relation(fields: [patientId], references: [id])
   prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
   salle          Salle?        @relation(fields: [salleId], references: [id])
 
@@ -125,7 +99,6 @@ model DossierCPA {
   dateValidation DateTime?
   serviceId      String
   anesthesiste   Medecin?      @relation(fields: [anesthesisteId], references: [id])
-  patient        Patient       @relation(fields: [patientId], references: [id])
   prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
@@ -157,7 +130,6 @@ model ChecklistAvant {
   risquesVerifies       Boolean      @default(false)
   tenueAppropriee       Boolean      @default(false)
   validationCollegiale  Boolean      @default(false)
-  patient               Patient      @relation(fields: [patientId], references: [id])
   prescription          Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
@@ -174,7 +146,6 @@ model OperationEndoscopie {
   medicalNotes     String?
   patientId        String
   voiceTranscripts Json?
-  patient          Patient      @relation(fields: [patientId], references: [id])
   prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
@@ -193,7 +164,6 @@ model ChecklistApres {
   patientId              String
   prescriptionsPostActe  String?
   remarques              String?
-  patient                Patient      @relation(fields: [patientId], references: [id])
   prescription           Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
@@ -216,7 +186,7 @@ model ResultatEndoscopie {
   mainDiagnosis    String?
   observations     String?
   patientId        String
-  patient          Patient      @relation(fields: [patientId], references: [id])
+  details          Json?
   prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])

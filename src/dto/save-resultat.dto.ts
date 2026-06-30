@@ -33,4 +33,22 @@ export class SaveResultatDto {
 
   @ApiPropertyOptional()
   doctorName?: string;
+
+  @ApiPropertyOptional({ description: "Type d'examen sélectionné dans le formulaire" })
+  typeExamen?: string;
+
+  @ApiPropertyOptional({ description: 'Identité du responsable / indication clinique (varie selon le formulaire)' })
+  responsable?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Équipe endoscopiste (opérateur, infirmières, anesthésiste)' })
+  endoscopistes?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Informations infirmières complémentaires' })
+  infirmieres?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Informations matériel / rendez-vous (endoscope, désinfection, kit ligature...)' })
+  rendezVous?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: "Constatations anatomiques, spécifiques au type d'examen" })
+  constatations?: Record<string, unknown>;
 }

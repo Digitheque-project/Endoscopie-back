@@ -25,7 +25,6 @@ import { SaveChecklistApresDto } from './dto/save-checklist-apres.dto';
 import { SaveResultatDto } from './dto/save-resultat.dto';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
-import { CreatePatientDto } from './dto/create-patient.dto';
 import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
@@ -135,17 +134,17 @@ export class AppController {
   @Get('api/patients/:id')
   @ApiTags('Patients')
   @ApiOperation({ summary: 'Récupérer un patient par ID' })
-  @ApiParam({ name: 'id', description: 'UUID du patient' })
+  @ApiParam({ name: 'id', description: 'Identifiant Accueil du patient' })
   async getPatientById(@Param('id') id: string) {
     return this.appService.getPatientById(id);
   }
 
-  @Post('api/patients')
-  @ApiTags('Patients')
-  @ApiOperation({ summary: '[POST] Créer un patient', operationId: 'createPatient' })
-  @ApiBody({ type: CreatePatientDto })
-  async createPatient(@Body() data: CreatePatientDto) {
-    return this.appService.createPatient(data);
+  // ——— Types d'examen ———
+  @Get('api/exam-types')
+  @ApiTags('Configuration')
+  @ApiOperation({ summary: "Lister les types d'examen d'endoscopie" })
+  async getExamTypes() {
+    return this.appService.getExamTypes();
   }
 
   // ——— Médecins ———
@@ -179,6 +178,14 @@ export class AppController {
   @ApiQuery({ name: 'serviceId', required: false })
   async getPrescriptions(@Query('serviceId') serviceId?: string) {
     return this.appService.getPrescriptions(serviceId);
+  }
+
+  @Get('api/prescriptions/pending-reports')
+  @ApiTags('Prescriptions')
+  @ApiOperation({ summary: "Lister les prescriptions dont l'examen est terminé mais sans compte-rendu" })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPendingReports(@Query('serviceId') serviceId?: string) {
+    return this.appService.getPendingReports(serviceId);
   }
 
   @Get('api/prescriptions/:id')
@@ -332,8 +339,9 @@ export class AppController {
   }
 
   @Post('api/rendezvous')
+  @Roles('MAJOR')
   @ApiTags('Rendez-vous')
-  @ApiOperation({ summary: '[POST] Créer ou mettre à jour un rendez-vous', operationId: 'createRendezVous' })
+  @ApiOperation({ summary: '[POST] Créer ou mettre à jour un rendez-vous (réservé au rôle Major)', operationId: 'createRendezVous' })
   @ApiBody({ type: CreateRendezVousDto })
   @ApiOkResponse({ description: 'Rendez-vous créé ou mis à jour' })
   async createRendezVous(@Body() data: CreateRendezVousDto) {
@@ -385,8 +393,9 @@ export class AppController {
   }
 
   @Post('api/checklists/avant')
+  @Roles('MEDECIN')
   @ApiTags('Checklists')
-  @ApiOperation({ summary: '[POST] Enregistrer la checklist avant endoscopie', operationId: 'saveChecklistAvant' })
+  @ApiOperation({ summary: '[POST] Enregistrer la checklist avant endoscopie (réservé au rôle Médecin)', operationId: 'saveChecklistAvant' })
   @ApiBody({ type: SaveChecklistAvantDto })
   async saveChecklistAvant(@Body() data: SaveChecklistAvantDto) {
     return this.appService.saveChecklistAvant(data);
@@ -406,8 +415,9 @@ export class AppController {
   }
 
   @Post('api/operations')
+  @Roles('MEDECIN')
   @ApiTags('Operations')
-  @ApiOperation({ summary: '[POST] Enregistrer les notes de l\'opération endoscopie', operationId: 'saveOperation' })
+  @ApiOperation({ summary: '[POST] Enregistrer les notes de l\'opération endoscopie (réservé au rôle Médecin)', operationId: 'saveOperation' })
   @ApiBody({ type: SaveOperationDto })
   async saveOperation(@Body() data: SaveOperationDto) {
     return this.appService.saveOperation(data);
@@ -427,8 +437,9 @@ export class AppController {
   }
 
   @Post('api/checklists/apres')
+  @Roles('MEDECIN')
   @ApiTags('Checklists')
-  @ApiOperation({ summary: '[POST] Enregistrer la checklist après endoscopie', operationId: 'saveChecklistApres' })
+  @ApiOperation({ summary: '[POST] Enregistrer la checklist après endoscopie (réservé au rôle Médecin)', operationId: 'saveChecklistApres' })
   @ApiBody({ type: SaveChecklistApresDto })
   async saveChecklistApres(@Body() data: SaveChecklistApresDto) {
     return this.appService.saveChecklistApres(data);
@@ -464,8 +475,9 @@ export class AppController {
   }
 
   @Post('api/resultats')
+  @Roles('MEDECIN')
   @ApiTags('Resultats')
-  @ApiOperation({ summary: '[POST] Enregistrer les résultats de l\'endoscopie', operationId: 'saveResultat' })
+  @ApiOperation({ summary: '[POST] Enregistrer les résultats de l\'endoscopie (réservé au rôle Médecin)', operationId: 'saveResultat' })
   @ApiBody({ type: SaveResultatDto })
   async saveResultat(@Body() data: SaveResultatDto) {
     return this.appService.saveResultat(data);

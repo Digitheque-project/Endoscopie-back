@@ -3,7 +3,6 @@ const prisma = new PrismaClient();
 
 async function main() {
   const counts = {
-    Patient: await prisma.patient.count(),
     Medecin: await prisma.medecin.count(),
     Salle: await prisma.salle.count(),
     Prescription: await prisma.prescription.count(),

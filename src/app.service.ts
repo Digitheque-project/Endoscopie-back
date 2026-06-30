@@ -14,7 +14,6 @@ import {
 } from './config/endoscopie-service';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
-import { CreatePatientDto } from './dto/create-patient.dto';
 import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
@@ -25,6 +24,20 @@ import {
   getNotificationWebhookUrl,
 } from './config/notification-service';
 import { CreateNotificationPayload } from './notification/notification.types';
+
+interface AccueilPatientRaw {
+  id: string;
+  nom: string;
+  prenom?: string | null;
+  sexe?: 'MALE' | 'FEMALE' | string | null;
+  dateNaissance?: string | null;
+  cin?: string | null;
+  profession?: string | null;
+  adresse?: string | null;
+  telephone?: string | null;
+  contactUrgence?: string | null;
+  priseEnChargeId?: string | null;
+}
 
 @Injectable()
 export class AppService {
@@ -72,8 +85,7 @@ export class AppService {
           AND table_name = 'Prescription'
           AND column_name = 'serviceId'
       `;
-      const [patients, medecins, prescriptions] = await Promise.all([
-        this.prisma.patient.count(),
+      const [medecins, prescriptions] = await Promise.all([
         this.prisma.medecin.count(),
         this.prisma.prescription.count(),
       ]);
@@ -82,7 +94,7 @@ export class AppService {
         database: 'connected',
         hasServiceIdColumn: columns.length > 0,
         endoscopieServiceId: this.getEndoscopieServiceId(),
-        counts: { patients, medecins, prescriptions },
+        counts: { medecins, prescriptions },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -113,24 +125,44 @@ export class AppService {
   }
 
   async getPrescriptions(serviceIdOverride?: string) {
-    return this.prisma.prescription.findMany({
+    const prescriptions = await this.prisma.prescription.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        patient: true,
         medecinPrescripteur: true,
         rendezVous: true,
+        checklistApres: true,
       },
       orderBy: {
         dateDemande: 'desc',
       },
     });
+    return this.attachPatients(prescriptions);
+  }
+
+  /** Prescriptions dont l'examen est terminé (checklist après validée) mais sans compte-rendu enregistré. */
+  async getPendingReports(serviceIdOverride?: string) {
+    const prescriptions = await this.prisma.prescription.findMany({
+      where: {
+        ...this.scope(serviceIdOverride),
+        checklistApres: { estValide: true },
+        resultatEndoscopie: null,
+      },
+      include: {
+        medecinPrescripteur: true,
+        rendezVous: true,
+        checklistApres: true,
+      },
+      orderBy: {
+        dateDemande: 'desc',
+      },
+    });
+    return this.attachPatients(prescriptions);
   }
 
   async getPrescriptionById(id: string, serviceIdOverride?: string) {
     const prescription = await this.prisma.prescription.findFirst({
       where: { id, ...this.scope(serviceIdOverride) },
       include: {
-        patient: true,
         medecinPrescripteur: true,
         dossierCPA: { include: { anesthesiste: true } },
         checklistAvant: true,
@@ -142,7 +174,7 @@ export class AppService {
     if (!prescription) {
       throw new NotFoundException(`Prescription ${id} introuvable`);
     }
-    return prescription;
+    return this.attachPatient(prescription);
   }
 
   async getArchives(
@@ -159,19 +191,8 @@ export class AppService {
       where: {
         serviceId,
         ...(Object.keys(dateFilter).length ? { dateDemande: dateFilter } : {}),
-        ...(filters.nom
-          ? {
-              patient: {
-                OR: [
-                  { nom: { contains: filters.nom, mode: 'insensitive' } },
-                  { prenom: { contains: filters.nom, mode: 'insensitive' } },
-                ],
-              },
-            }
-          : {}),
       },
       include: {
-        patient: true,
         medecinPrescripteur: true,
         dossierCPA: true,
         checklistAvant: true,
@@ -181,15 +202,26 @@ export class AppService {
       orderBy: { dateDemande: 'desc' },
     });
 
-    return prescriptions.map((p) => {
+    const withPatient = await this.attachPatients(prescriptions);
+    const filtered = filters.nom
+      ? withPatient.filter((p) => {
+          const needle = filters.nom!.toLowerCase();
+          return (
+            p.patient?.nom.toLowerCase().includes(needle) ||
+            p.patient?.prenom.toLowerCase().includes(needle)
+          );
+        })
+      : withPatient;
+
+    return filtered.map((p) => {
       const checklistAvantValide = !!p.checklistAvant?.estValide;
       const checklistApresValide = !!p.checklistApres?.estValide;
       const resultatDisponible = !!p.resultatEndoscopie;
       return {
         prescriptionId: p.id,
         patientId: p.patientId,
-        patientNom: p.patient.nom,
-        patientPrenom: p.patient.prenom,
+        patientNom: p.patient?.nom ?? 'INCONNU',
+        patientPrenom: p.patient?.prenom ?? '',
         typeExamen: p.typeExamen,
         dateDemande: p.dateDemande,
         prescripteur: p.medecinPrescripteur
@@ -208,27 +240,69 @@ export class AppService {
     });
   }
 
-/** Récupère un patient depuis l'API Accueil (registre CHU) par son id. */
-  private async fetchAccueilPatient(patientId: string): Promise<{
-    nom?: string;
-    prenom?: string;
-    dateNaissance?: string | null;
-    sexe?: string | null;
-    cin?: string | null;
-    profession?: string | null;
-    adresse?: string | null;
-    telephone?: string | null;
-    contactUrgence?: string | null;
-    priseEnChargeId?: string | null;
-  } | null> {
+  /** Liste complète des patients du CHU, en direct depuis l'API Accueil (jamais persistée localement). */
+  private async getAccueilPatients(): Promise<AccueilPatientRaw[]> {
+    try {
+      const url = `${getAccueilApiUrl()}/accueil/patients?chuId=${getEndoscopieChuId()}`;
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      return (await res.json()) as AccueilPatientRaw[];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Un seul patient, en direct depuis l'API Accueil par son id. */
+  private async getAccueilPatient(
+    patientId: string,
+  ): Promise<AccueilPatientRaw | null> {
     try {
       const url = `${getAccueilApiUrl()}/accueil/patients/${encodeURIComponent(patientId)}?chuId=${getEndoscopieChuId()}`;
       const res = await fetch(url);
       if (!res.ok) return null;
-      return (await res.json()) as Record<string, unknown> as any;
+      return (await res.json()) as AccueilPatientRaw;
     } catch {
       return null;
     }
+  }
+
+  private toPatientView(raw: AccueilPatientRaw) {
+    return {
+      id: raw.id,
+      nom: raw.nom,
+      prenom: raw.prenom || '',
+      dateNaissance: raw.dateNaissance ? new Date(raw.dateNaissance) : null,
+      sexe: raw.sexe === 'FEMALE' ? 'F' : raw.sexe === 'MALE' ? 'M' : null,
+      cin: raw.cin || null,
+      profession: raw.profession || null,
+      adresse: raw.adresse || null,
+      telephone: raw.telephone || null,
+      contactUrgence: raw.contactUrgence || null,
+      priseEnChargeId: raw.priseEnChargeId || null,
+    };
+  }
+
+  /** Attache la fiche patient (Accueil, en direct) à une seule ligne via son patientId. */
+  private async attachPatient<T extends { patientId?: string | null }>(
+    row: T,
+  ) {
+    const raw = row.patientId
+      ? await this.getAccueilPatient(row.patientId)
+      : null;
+    return { ...row, patient: raw ? this.toPatientView(raw) : null };
+  }
+
+  /** Attache la fiche patient (Accueil, en direct) à une liste de lignes en un seul appel groupé. */
+  private async attachPatients<T extends { patientId?: string | null }>(
+    rows: T[],
+  ) {
+    if (rows.length === 0) return rows.map((r) => ({ ...r, patient: null }));
+    const all = await this.getAccueilPatients();
+    const map = new Map(all.map((p) => [p.id, this.toPatientView(p)]));
+    return rows.map((r) => ({
+      ...r,
+      patient: r.patientId ? map.get(r.patientId) ?? null : null,
+    }));
   }
 
   async createPrescription(data: CreatePrescriptionDto) {
@@ -241,68 +315,26 @@ export class AppService {
       throw new BadRequestException('typeExamen est obligatoire');
     }
 
-    // Si le patient n'existe pas encore localement, on tente de récupérer ses
-    // vraies informations depuis l'API Accueil avant de retomber sur un
-    // placeholder « INCONNU ».
-    const existingPatient = await this.prisma.patient.findUnique({
-      where: { id: data.patientId },
-    });
-
-    let patientCreateData: Prisma.PatientCreateInput = {
-      id: data.patientId,
-      nom: 'INCONNU',
-      prenom: 'PATIENT',
-      dateNaissance: null,
-      sexe: null,
-      groupeSanguin: null,
-      poids: null,
-      antecedentsMedicaux: null,
-    };
-
-    if (!existingPatient) {
-      const accueilPatient = await this.fetchAccueilPatient(data.patientId);
-      if (accueilPatient) {
-        patientCreateData = {
-          id: data.patientId,
-          nom: accueilPatient.nom || 'INCONNU',
-          prenom: accueilPatient.prenom || 'PATIENT',
-          dateNaissance: accueilPatient.dateNaissance
-            ? new Date(accueilPatient.dateNaissance)
-            : null,
-          sexe:
-            accueilPatient.sexe === 'FEMALE'
-              ? 'F'
-              : accueilPatient.sexe === 'MALE'
-                ? 'M'
-                : null,
-          cin: accueilPatient.cin || null,
-          profession: accueilPatient.profession || null,
-          adresse: accueilPatient.adresse || null,
-          telephone: accueilPatient.telephone || null,
-          contactUrgence: accueilPatient.contactUrgence || null,
-          priseEnChargeId: accueilPatient.priseEnChargeId || null,
-        };
-      }
+    // Le patient doit exister dans le registre Accueil — on ne fabrique plus
+    // de placeholder local, on consomme Accueil en direct.
+    const accueilPatient = await this.getAccueilPatient(data.patientId);
+    if (!accueilPatient) {
+      throw new BadRequestException(
+        `Patient ${data.patientId} introuvable dans le registre Accueil`,
+      );
     }
 
-    const [patient, medecin] = await Promise.all([
-      this.prisma.patient.upsert({
-        where: { id: data.patientId },
-        update: {},
-        create: patientCreateData,
-      }),
-      this.prisma.medecin.upsert({
-        where: { id: data.medecinId },
-        update: {},
-        create: {
-          id: data.medecinId,
-          nom: 'INCONNU',
-          prenom: 'MEDECIN',
-          specialite: null,
-          role: null,
-        },
-      }),
-    ]);
+    await this.prisma.medecin.upsert({
+      where: { id: data.medecinId },
+      update: {},
+      create: {
+        id: data.medecinId,
+        nom: 'INCONNU',
+        prenom: 'MEDECIN',
+        specialite: null,
+        role: null,
+      },
+    });
 
     try {
       const prescription = await this.prisma.prescription.create({
@@ -319,14 +351,18 @@ export class AppService {
             : new Date(),
         },
         include: {
-          patient: true,
           medecinPrescripteur: true,
         },
       });
 
-      await this.notificationService.notifyPrescriptionCreated(prescription);
+      const enriched = {
+        ...prescription,
+        patient: this.toPatientView(accueilPatient),
+      };
 
-      return prescription;
+      await this.notificationService.notifyPrescriptionCreated(enriched);
+
+      return enriched;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError) {
         throw error;
@@ -348,7 +384,7 @@ export class AppService {
   ) {
     await this.getPrescriptionById(id, serviceIdOverride);
     try {
-      return await this.prisma.prescription.update({
+      const updated = await this.prisma.prescription.update({
         where: { id },
         data: {
           ...(data.statut !== undefined && { statut: data.statut }),
@@ -357,44 +393,46 @@ export class AppService {
           ...(data.motif !== undefined && { motif: data.motif }),
         },
         include: {
-          patient: true,
           medecinPrescripteur: true,
         },
       });
+      return this.attachPatient(updated);
     } catch {
       throw new NotFoundException(`Prescription ${id} introuvable`);
     }
   }
 
   async getPatients() {
-    return this.prisma.patient.findMany({
-      orderBy: [{ nom: 'asc' }, { prenom: 'asc' }],
-    });
+    const patients = await this.getAccueilPatients();
+    return patients
+      .map((p) => this.toPatientView(p))
+      .sort(
+        (a, b) => a.nom.localeCompare(b.nom) || a.prenom.localeCompare(b.prenom),
+      );
   }
 
   async getPatientById(id: string, serviceIdOverride?: string) {
     const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
-    const patient = await this.prisma.patient.findUnique({
-      where: { id },
-      include: {
-        prescriptions: {
-          where: { serviceId },
-          include: { medecinPrescripteur: true },
-          orderBy: { dateDemande: 'desc' },
-        },
-        rendezVous: { where: { serviceId } },
-        dossiersCPA: { where: { serviceId } },
-      },
-    });
-    if (!patient) {
+    const accueilPatient = await this.getAccueilPatient(id);
+    if (!accueilPatient) {
       throw new NotFoundException(`Patient ${id} introuvable`);
     }
 
+    const [prescriptions, rendezVous, dossiersCPA] = await Promise.all([
+      this.prisma.prescription.findMany({
+        where: { patientId: id, serviceId },
+        include: { medecinPrescripteur: true },
+        orderBy: { dateDemande: 'desc' },
+      }),
+      this.prisma.rendezVous.findMany({ where: { patientId: id, serviceId } }),
+      this.prisma.dossierCPA.findMany({ where: { patientId: id, serviceId } }),
+    ]);
+
     let priseEnCharge: Record<string, unknown> | null = null;
-    if (patient.priseEnChargeId) {
+    if (accueilPatient.priseEnChargeId) {
       try {
         const res = await fetch(
-          `${getChuApiUrl()}/service-chu/prise-en-charge/${encodeURIComponent(patient.priseEnChargeId)}`,
+          `${getChuApiUrl()}/service-chu/prise-en-charge/${encodeURIComponent(accueilPatient.priseEnChargeId)}`,
         );
         if (res.ok) {
           priseEnCharge = (await res.json()) as Record<string, unknown>;
@@ -404,20 +442,18 @@ export class AppService {
       }
     }
 
-    return { ...patient, priseEnCharge };
+    return {
+      ...this.toPatientView(accueilPatient),
+      prescriptions,
+      rendezVous,
+      dossiersCPA,
+      priseEnCharge,
+    };
   }
 
-  async createPatient(data: CreatePatientDto) {
-    return this.prisma.patient.create({
-      data: {
-        nom: data.nom,
-        prenom: data.prenom,
-        dateNaissance: data.dateNaissance ? new Date(data.dateNaissance) : null,
-        sexe: data.sexe ?? null,
-        groupeSanguin: data.groupeSanguin ?? null,
-        poids: data.poids ?? null,
-        antecedentsMedicaux: data.antecedentsMedicaux ?? null,
-      },
+  async getExamTypes() {
+    return this.prisma.endoscopyExamType.findMany({
+      orderBy: { name: 'asc' },
     });
   }
 
@@ -447,22 +483,21 @@ export class AppService {
   }
 
   async getDossiersCpa(serviceIdOverride?: string) {
-    return this.prisma.dossierCPA.findMany({
+    const dossiers = await this.prisma.dossierCPA.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        patient: true,
         prescription: true,
         anesthesiste: true,
       },
       orderBy: { id: 'desc' },
     });
+    return this.attachPatients(dossiers);
   }
 
   async getDossierCpaById(id: string, serviceIdOverride?: string) {
     const dossier = await this.prisma.dossierCPA.findFirst({
       where: { id, ...this.scope(serviceIdOverride) },
       include: {
-        patient: true,
         prescription: true,
         anesthesiste: true,
       },
@@ -470,21 +505,21 @@ export class AppService {
     if (!dossier) {
       throw new NotFoundException(`Dossier CPA ${id} introuvable`);
     }
-    return dossier;
+    return this.attachPatient(dossier);
   }
 
   async getDossierCpaByPrescriptionId(
     prescriptionId: string,
     serviceIdOverride?: string,
   ) {
-    return this.prisma.dossierCPA.findFirst({
+    const dossier = await this.prisma.dossierCPA.findFirst({
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
       include: {
-        patient: true,
         prescription: true,
         anesthesiste: true,
       },
     });
+    return dossier ? this.attachPatient(dossier) : null;
   }
 
   async createDossierCpa(data: CreateDossierCpaDto) {
@@ -500,7 +535,6 @@ export class AppService {
         statut: data.statut || 'Brouillon',
       },
       include: {
-        patient: true,
         prescription: true,
         anesthesiste: true,
       },
@@ -517,7 +551,7 @@ export class AppService {
       });
     }
 
-    return dossier;
+    return this.attachPatient(dossier);
   }
 
   async updateDossierCpa(
@@ -527,7 +561,7 @@ export class AppService {
   ) {
     await this.getDossierCpaById(id, serviceIdOverride);
     try {
-      return await this.prisma.dossierCPA.update({
+      const updated = await this.prisma.dossierCPA.update({
         where: { id },
         data: {
           ...(data.anesthesisteId !== undefined && {
@@ -545,21 +579,20 @@ export class AppService {
           }),
         },
         include: {
-          patient: true,
           prescription: true,
           anesthesiste: true,
         },
       });
+      return this.attachPatient(updated);
     } catch {
       throw new NotFoundException(`Dossier CPA ${id} introuvable`);
     }
   }
 
   async getRendezVous(serviceIdOverride?: string) {
-    return this.prisma.rendezVous.findMany({
+    const rendezVous = await this.prisma.rendezVous.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        patient: true,
         medecin: true,
         salle: true,
         prescription: {
@@ -572,6 +605,7 @@ export class AppService {
         dateHeureDebut: 'asc',
       },
     });
+    return this.attachPatients(rendezVous);
   }
 
   async getRendezVousJour(date: string, serviceIdOverride?: string) {
@@ -580,7 +614,7 @@ export class AppService {
     const startOfDay = new Date(Date.UTC(dateObj.getUTCFullYear(), dateObj.getUTCMonth(), dateObj.getUTCDate(), 0, 0, 0));
     const endOfDay = new Date(Date.UTC(dateObj.getUTCFullYear(), dateObj.getUTCMonth(), dateObj.getUTCDate(), 23, 59, 59));
 
-    return this.prisma.rendezVous.findMany({
+    const rendezVous = await this.prisma.rendezVous.findMany({
       where: {
         ...this.scope(serviceIdOverride),
         dateHeureDebut: {
@@ -589,7 +623,6 @@ export class AppService {
         },
       },
       include: {
-        patient: true,
         medecin: true,
         salle: true,
         prescription: {
@@ -602,6 +635,7 @@ export class AppService {
         dateHeureDebut: 'asc',
       },
     });
+    return this.attachPatients(rendezVous);
   }
 
   async getProcedureCountsToday(serviceIdOverride?: string) {
@@ -714,8 +748,45 @@ export class AppService {
 
   async createRendezVous(data: any) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
+
+    if (!data.dateHeureDebut) {
+      throw new BadRequestException('dateHeureDebut est obligatoire');
+    }
     const dateHeureDebut = new Date(data.dateHeureDebut);
-    const dateHeureFin = data.dateHeureFin ? new Date(data.dateHeureFin) : null;
+    if (Number.isNaN(dateHeureDebut.getTime())) {
+      throw new BadRequestException('dateHeureDebut est invalide');
+    }
+    if (data.dateHeureFin) {
+      const explicitEnd = new Date(data.dateHeureFin);
+      if (Number.isNaN(explicitEnd.getTime())) {
+        throw new BadRequestException('dateHeureFin est invalide');
+      }
+      if (explicitEnd <= dateHeureDebut) {
+        throw new BadRequestException(
+          "L'heure de fin doit être postérieure à l'heure de début.",
+        );
+      }
+    }
+    if (dateHeureDebut.getTime() < Date.now()) {
+      throw new BadRequestException(
+        'Impossible de planifier un rendez-vous dans le passé.',
+      );
+    }
+    // Toujours stocker une heure de fin concrète (45 min par défaut) pour que
+    // les futures vérifications de collision restent fiables.
+    const dateHeureFin = data.dateHeureFin
+      ? new Date(data.dateHeureFin)
+      : new Date(dateHeureDebut.getTime() + 45 * 60000);
+
+    if (data.salleId) {
+      const salle = await this.prisma.salle.findUnique({ where: { id: data.salleId } });
+      if (!salle) {
+        throw new BadRequestException(`Salle ${data.salleId} introuvable`);
+      }
+      if (!salle.estActive) {
+        throw new BadRequestException(`La salle "${salle.nom}" n'est plus active.`);
+      }
+    }
 
     const rendezVousPayload = {
       serviceId,
@@ -730,7 +801,52 @@ export class AppService {
       notesCliniques: data.notesCliniques || null,
     };
 
+    // Chevauchement de créneau : [dateHeureDebut, dateHeureFin) contre les RDV existants,
+    // en excluant le RDV qu'on est en train de replanifier (même prescriptionId) et les
+    // rendez-vous annulés/terminés.
+    const overlapWhere = (extra: Record<string, unknown>) => ({
+      serviceId,
+      ...extra,
+      ...(data.prescriptionId ? { prescriptionId: { not: data.prescriptionId } } : {}),
+      dateHeureDebut: { lt: dateHeureFin },
+      dateHeureFin: { gt: dateHeureDebut },
+      NOT: { statut: { in: ['Annulé', 'Terminé'] } },
+    });
+
     try {
+      if (data.salleId) {
+        const existingConflict = await this.prisma.rendezVous.findFirst({
+          where: overlapWhere({ salleId: data.salleId }),
+        });
+        if (existingConflict) {
+          throw new BadRequestException(
+            `Conflit d'horaire : cette salle est déjà réservée sur ce créneau.`,
+          );
+        }
+      }
+
+      if (data.medecinId) {
+        const existingForMedecin = await this.prisma.rendezVous.findFirst({
+          where: overlapWhere({ medecinId: data.medecinId }),
+        });
+        if (existingForMedecin) {
+          throw new BadRequestException(
+            `Ce médecin a déjà un rendez-vous sur ce créneau.`,
+          );
+        }
+      }
+
+      if (data.patientId) {
+        const existingForPatient = await this.prisma.rendezVous.findFirst({
+          where: overlapWhere({ patientId: data.patientId }),
+        });
+        if (existingForPatient) {
+          throw new BadRequestException(
+            `Ce patient a déjà un rendez-vous sur ce créneau.`,
+          );
+        }
+      }
+
       if (data.prescriptionId) {
         // Cas 1: Mise à jour via prescriptionId (UPSERT)
         await this.prisma.prescription.updateMany({
@@ -745,66 +861,19 @@ export class AppService {
         });
       }
 
-      // Cas 2: Création sans prescriptionId - vérifier les doublons
-      // Éviter les doublons basés sur: salle + horaire
-      if (data.salleId) {
-        const existingConflict = await this.prisma.rendezVous.findFirst({
-          where: {
-            serviceId,
-            salleId: data.salleId,
-            dateHeureDebut: {
-              lte: dateHeureFin || new Date(dateHeureDebut.getTime() + 45 * 60000),
-            },
-            dateHeureFin: {
-              gte: dateHeureDebut,
-            },
-            // Exclure les rendez-vous annulés/terminés
-            NOT: {
-              statut: { in: ['Annulé', 'Terminé'] },
-            },
-          },
-        });
-
-        if (existingConflict) {
-          throw new BadRequestException(
-            `Conflit d'horaire: Une autre réservation existe pour cette salle à cette heure.`,
-          );
-        }
-      }
-
-      // Éviter les doublons pour le même patient avec prescriptionId (doublon accidentel)
-      if (data.patientId && data.prescriptionId === undefined) {
-        const existingForPatient = await this.prisma.rendezVous.findFirst({
-          where: {
-            serviceId,
-            patientId: data.patientId,
-            dateHeureDebut: {
-              lte: new Date(dateHeureDebut.getTime() + 60 * 60000), // même heure
-              gte: new Date(dateHeureDebut.getTime() - 60 * 60000),
-            },
-            NOT: {
-              statut: { in: ['Annulé', 'Terminé'] },
-            },
-          },
-        });
-
-        if (existingForPatient) {
-          throw new BadRequestException(
-            `Un rendez-vous existe déjà pour ce patient à cette heure.`,
-          );
-        }
-      }
-
-      return await this.prisma.rendezVous.create({
+      const created = await this.prisma.rendezVous.create({
         data: rendezVousPayload,
         include: {
-          patient: true,
           medecin: true,
           salle: true,
           prescription: true,
         },
       });
+      return this.attachPatient(created);
     } catch (error) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
       console.error('Erreur lors de la création du rendez-vous:', error);
       throw error;
     }
@@ -823,6 +892,78 @@ export class AppService {
       throw new NotFoundException(`Rendez-vous ${id} introuvable`);
     }
 
+    const reschedule = data.dateHeureDebut !== undefined || data.dateHeureFin !== undefined;
+    let newDebut = existing.dateHeureDebut;
+    let newFin = existing.dateHeureFin;
+
+    if (reschedule) {
+      if (data.dateHeureDebut !== undefined) {
+        newDebut = new Date(data.dateHeureDebut);
+        if (Number.isNaN(newDebut.getTime())) {
+          throw new BadRequestException('dateHeureDebut est invalide');
+        }
+      }
+      if (data.dateHeureFin !== undefined) {
+        newFin = data.dateHeureFin ? new Date(data.dateHeureFin) : null;
+        if (newFin && Number.isNaN(newFin.getTime())) {
+          throw new BadRequestException('dateHeureFin est invalide');
+        }
+      }
+      if (!newFin) {
+        newFin = new Date(newDebut.getTime() + 45 * 60000);
+      }
+      if (newFin <= newDebut) {
+        throw new BadRequestException(
+          "L'heure de fin doit être postérieure à l'heure de début.",
+        );
+      }
+      if (newDebut.getTime() < Date.now()) {
+        throw new BadRequestException(
+          'Impossible de planifier un rendez-vous dans le passé.',
+        );
+      }
+
+      const overlapWhere = (extra: Record<string, unknown>) => ({
+        serviceId,
+        ...extra,
+        id: { not: id },
+        dateHeureDebut: { lt: newFin as Date },
+        dateHeureFin: { gt: newDebut },
+        NOT: { statut: { in: ['Annulé', 'Terminé'] } },
+      });
+
+      if (existing.salleId) {
+        const conflict = await this.prisma.rendezVous.findFirst({
+          where: overlapWhere({ salleId: existing.salleId }),
+        });
+        if (conflict) {
+          throw new BadRequestException(
+            `Conflit d'horaire : cette salle est déjà réservée sur ce créneau.`,
+          );
+        }
+      }
+      if (existing.medecinId) {
+        const conflict = await this.prisma.rendezVous.findFirst({
+          where: overlapWhere({ medecinId: existing.medecinId }),
+        });
+        if (conflict) {
+          throw new BadRequestException(
+            `Ce médecin a déjà un rendez-vous sur ce créneau.`,
+          );
+        }
+      }
+      if (existing.patientId) {
+        const conflict = await this.prisma.rendezVous.findFirst({
+          where: overlapWhere({ patientId: existing.patientId }),
+        });
+        if (conflict) {
+          throw new BadRequestException(
+            `Ce patient a déjà un rendez-vous sur ce créneau.`,
+          );
+        }
+      }
+    }
+
     const updated = await this.prisma.rendezVous.update({
       where: { id },
       data: {
@@ -833,15 +974,10 @@ export class AppService {
         ...(data.notesCliniques !== undefined && {
           notesCliniques: data.notesCliniques,
         }),
-        ...(data.dateHeureDebut !== undefined && {
-          dateHeureDebut: new Date(data.dateHeureDebut),
-        }),
-        ...(data.dateHeureFin !== undefined && {
-          dateHeureFin: data.dateHeureFin ? new Date(data.dateHeureFin) : null,
-        }),
+        ...(data.dateHeureDebut !== undefined && { dateHeureDebut: newDebut }),
+        ...(data.dateHeureFin !== undefined && { dateHeureFin: newFin }),
       },
       include: {
-        patient: true,
         medecin: true,
         salle: true,
         prescription: true,
@@ -862,7 +998,7 @@ export class AppService {
       });
     }
 
-    return updated;
+    return this.attachPatient(updated);
   }
 
   async createSalle(data: any) {
@@ -882,10 +1018,10 @@ export class AppService {
     prescriptionId: string,
     serviceIdOverride?: string,
   ) {
-    return this.prisma.checklistAvant.findFirst({
+    const checklist = await this.prisma.checklistAvant.findFirst({
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
-      include: { patient: true },
     });
+    return checklist ? this.attachPatient(checklist) : null;
   }
 
   async saveChecklistAvant(data: any) {
@@ -932,10 +1068,10 @@ export class AppService {
     prescriptionId: string,
     serviceIdOverride?: string,
   ) {
-    return this.prisma.operationEndoscopie.findFirst({
+    const operation = await this.prisma.operationEndoscopie.findFirst({
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
-      include: { patient: true },
     });
+    return operation ? this.attachPatient(operation) : null;
   }
 
   async saveOperation(data: any) {
@@ -968,10 +1104,10 @@ export class AppService {
     prescriptionId: string,
     serviceIdOverride?: string,
   ) {
-    return this.prisma.checklistApres.findFirst({
+    const checklist = await this.prisma.checklistApres.findFirst({
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
-      include: { patient: true },
     });
+    return checklist ? this.attachPatient(checklist) : null;
   }
 
   async saveChecklistApres(data: any) {
@@ -1004,10 +1140,16 @@ export class AppService {
     prescriptionId: string,
     serviceIdOverride?: string,
   ) {
-    return this.prisma.resultatEndoscopie.findFirst({
+    const resultat = await this.prisma.resultatEndoscopie.findFirst({
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
-      include: { patient: true },
     });
+    if (!resultat) return null;
+    // `details` porte les champs spécifiques au type d'examen (constatations,
+    // équipe, etc.) ; on les refusionne à la racine pour que le frontend les
+    // lise comme avant, sans changement de contrat.
+    const { details, ...rest } = resultat;
+    const enriched = { ...rest, ...((details as Record<string, unknown>) ?? {}) };
+    return this.attachPatient(enriched);
   }
 
   async saveResultat(data: any) {
@@ -1017,15 +1159,31 @@ export class AppService {
 
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
 
+    const {
+      prescriptionId,
+      patientId,
+      serviceId: _serviceId,
+      reportText,
+      mainDiagnosis,
+      observations,
+      conclusion,
+      complication,
+      biopsy,
+      followUp,
+      doctorName,
+      ...details
+    } = data;
+
     const resultatData = {
-      reportText: data.reportText,
-      mainDiagnosis: data.mainDiagnosis,
-      observations: data.observations,
-      conclusion: data.conclusion,
-      complication: data.complication,
-      biopsy: data.biopsy,
-      followUp: data.followUp,
-      doctorName: data.doctorName,
+      reportText,
+      mainDiagnosis,
+      observations,
+      conclusion,
+      complication,
+      biopsy,
+      followUp,
+      doctorName,
+      details: Object.keys(details).length ? details : undefined,
     };
 
     return this.prisma.resultatEndoscopie.upsert({
@@ -1041,14 +1199,14 @@ export class AppService {
   }
 
   async listResultats(serviceIdOverride?: string) {
-    return this.prisma.resultatEndoscopie.findMany({
+    const resultats = await this.prisma.resultatEndoscopie.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        patient: true,
         prescription: true,
       },
       orderBy: { dateCreation: 'desc' },
     });
+    return this.attachPatients(resultats);
   }
 
   listNotifications(status = 'ENVOYE', serviceId?: string) {
@@ -1071,29 +1229,13 @@ export class AppService {
   async saveConfirmationPlanification(data: any) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
 
-    // Upsert le patient avec les infos du front
     const detailsPrescription = data.detailsPrescription;
-    const patientId = detailsPrescription.patient.id || randomUUID();
-    const patient = await this.prisma.patient.upsert({
-      where: { id: patientId },
-      create: {
-        id: patientId,
-        nom: detailsPrescription.patient.nom,
-        prenom: detailsPrescription.patient.prenoms || '',
-        dateNaissance: detailsPrescription.patient.dateNaissance
-          ? new Date(detailsPrescription.patient.dateNaissance)
-          : null,
-        sexe: detailsPrescription.patient.genre === 'Masculin' ? 'M' : 'F',
-      },
-      update: {
-        nom: detailsPrescription.patient.nom,
-        prenom: detailsPrescription.patient.prenoms || '',
-        dateNaissance: detailsPrescription.patient.dateNaissance
-          ? new Date(detailsPrescription.patient.dateNaissance)
-          : null,
-        sexe: detailsPrescription.patient.genre === 'Masculin' ? 'M' : 'F',
-      },
-    });
+    const patientId = detailsPrescription.patient?.id;
+    if (!patientId) {
+      throw new BadRequestException(
+        'detailsPrescription.patient.id est obligatoire',
+      );
+    }
 
     const prescriptionId = detailsPrescription.numeroPrescription || randomUUID();
     const prescription = await this.prisma.prescription.upsert({
@@ -1102,7 +1244,7 @@ export class AppService {
       },
       create: {
         id: prescriptionId,
-        patientId: patient.id,
+        patientId,
         medecinId: 'system',
         typeExamen: detailsPrescription.typeExamen,
         motif: detailsPrescription.indicationClinique,
@@ -1130,7 +1272,7 @@ export class AppService {
       create: {
         id: randomUUID(),
         prescriptionId: prescription.id,
-        patientId: patient.id,
+        patientId,
         dateHeureDebut,
         typeAnesthesie: data.typeAnesthesie?.type || null,
         notesCliniques: rendezVous.instructionsPatient,
@@ -1154,7 +1296,7 @@ export class AppService {
         create: {
           id: randomUUID(),
           prescriptionId: prescription.id,
-          patientId: patient.id,
+          patientId,
           typeAnesthesie: 'anesthesie_generale',
           observations: `Sédation IV - Médecin anesthésiste requis. ${data.typeAnesthesie?.remarque || ''}`,
           statut: 'Brouillon',
@@ -1170,30 +1312,29 @@ export class AppService {
     return {
       success: true,
       prescription,
-      patient,
+      patientId,
       rendezVous: rdv,
       confirmationMessage: 'Confirmation de planification enregistrée avec succès',
     };
   }
 
   async listConfirmationsPlanification(serviceIdOverride?: string) {
-    return this.prisma.prescription.findMany({
+    const prescriptions = await this.prisma.prescription.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        patient: true,
         medecinPrescripteur: true,
         rendezVous: true,
         dossierCPA: true,
       },
       orderBy: { dateDemande: 'desc' },
     });
+    return this.attachPatients(prescriptions);
   }
 
   async getConfirmationPlanification(prescriptionId: string, serviceIdOverride?: string) {
     const prescription = await this.prisma.prescription.findFirst({
       where: { id: prescriptionId, ...this.scope(serviceIdOverride) },
       include: {
-        patient: true,
         medecinPrescripteur: true,
         rendezVous: true,
         dossierCPA: true,
@@ -1204,6 +1345,9 @@ export class AppService {
       throw new NotFoundException(`Confirmation pour prescription ${prescriptionId} introuvable`);
     }
 
+    const accueilPatient = await this.getAccueilPatient(prescription.patientId);
+    const patient = accueilPatient ? this.toPatientView(accueilPatient) : null;
+
     // Transformer en format frontend
     return {
       detailsPrescription: {
@@ -1213,13 +1357,13 @@ export class AppService {
           ? `Dr. ${prescription.medecinPrescripteur.prenom} ${prescription.medecinPrescripteur.nom}`
           : 'Médecin Inconnu',
         patient: {
-          nom: prescription.patient.nom,
-          prenoms: prescription.patient.prenom,
-          dateNaissance: prescription.patient.dateNaissance?.toISOString().split('T')[0],
-          age: prescription.patient.dateNaissance
-            ? Math.floor((Date.now() - prescription.patient.dateNaissance.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+          nom: patient?.nom ?? 'INCONNU',
+          prenoms: patient?.prenom ?? '',
+          dateNaissance: patient?.dateNaissance?.toISOString().split('T')[0],
+          age: patient?.dateNaissance
+            ? Math.floor((Date.now() - patient.dateNaissance.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
             : 0,
-          genre: prescription.patient.sexe === 'M' ? 'Masculin' : 'Féminin',
+          genre: patient?.sexe === 'M' ? 'Masculin' : 'Féminin',
         },
         typeExamen: prescription.typeExamen,
         degreeUrgence: prescription.priorite as any,
