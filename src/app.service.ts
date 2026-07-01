@@ -1144,12 +1144,7 @@ export class AppService {
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
     });
     if (!resultat) return null;
-    // `details` porte les champs spécifiques au type d'examen (constatations,
-    // équipe, etc.) ; on les refusionne à la racine pour que le frontend les
-    // lise comme avant, sans changement de contrat.
-    const { details, ...rest } = resultat;
-    const enriched = { ...rest, ...((details as Record<string, unknown>) ?? {}) };
-    return this.attachPatient(enriched);
+    return this.attachPatient(resultat);
   }
 
   async saveResultat(data: any) {

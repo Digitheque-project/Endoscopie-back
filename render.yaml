@@ -26,6 +26,10 @@ services:
         fromDatabase:
           name: endoscopie-bd
           property: connectionString
+      - key: DIRECT_URL
+        fromDatabase:
+          name: endoscopie-bd
+          property: connectionString
       - key: FRONTEND_URL
         sync: false
     healthCheckPath: /
