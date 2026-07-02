@@ -167,6 +167,7 @@ export class AppService {
         dossierCPA: { include: { anesthesiste: true } },
         checklistAvant: true,
         checklistApres: true,
+        operationEndoscopie: true,
         resultatEndoscopie: true,
         rendezVous: { include: { salle: true } },
       },
