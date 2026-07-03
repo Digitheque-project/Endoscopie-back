@@ -143,6 +143,7 @@ model OperationEndoscopie {
   serviceId        String
   dateCreation     DateTime     @default(now())
   dateModification DateTime     @updatedAt
+  observationNotes String?
   medicalNotes     String?
   patientId        String
   voiceTranscripts Json?

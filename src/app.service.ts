@@ -1085,6 +1085,7 @@ export class AppService {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
 
     const operationData = {
+      observationNotes: data.observationNotes ?? null,
       medicalNotes: data.medicalNotes || '',
       voiceTranscripts: data.voiceTranscripts || [],
     };
