@@ -34,3 +34,8 @@ export function getAccueilApiUrl(): string {
     'https://acceuil-back-production.up.railway.app'
   );
 }
+
+/** URL de l'API du service Bloc Opératoire (intégration CPA/VPA). */
+export function getBlocApiUrl(): string | null {
+  return process.env.BLOC_API_URL?.replace(/\/$/, '') || null;
+}

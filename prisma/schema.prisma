@@ -98,6 +98,10 @@ model DossierCPA {
   statut         String        @default("Brouillon")
   dateValidation DateTime?
   serviceId      String
+  blocDemandeId  String?
+  decisionCpa    String?
+  dateCpa        DateTime?
+  dateVpa        DateTime?
   anesthesiste   Medecin?      @relation(fields: [anesthesisteId], references: [id])
   prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
 

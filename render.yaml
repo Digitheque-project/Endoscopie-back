@@ -22,6 +22,9 @@ services:
         value: https://service-notification.onrender.com
       - key: NOTIFICATION_WEBHOOK_SECRET
         sync: false
+      # URL de l'API Bloc Opératoire (intégration CPA/VPA — à renseigner une fois fournie)
+      - key: BLOC_API_URL
+        sync: false
       # À renseigner manuellement dans le dashboard Render avec votre URL Supabase
       - key: DATABASE_URL
         sync: false

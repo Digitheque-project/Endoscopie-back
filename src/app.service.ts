@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
 import {
   getAccueilApiUrl,
+  getBlocApiUrl,
   getChuApiUrl,
   getEndoscopieChuId,
   getEndoscopieServiceId,
@@ -552,7 +553,58 @@ export class AppService {
       });
     }
 
+    // Envoyer la demande CPA au service Bloc Opératoire (fire-and-forget)
+    this.notifyBlocCpa(dossier, data).catch(() => {
+      // Ne pas faire échouer la création si le Bloc est indisponible
+    });
+
     return this.attachPatient(dossier);
+  }
+
+  private async notifyBlocCpa(dossier: any, data: CreateDossierCpaDto) {
+    const blocUrl = getBlocApiUrl();
+    if (!blocUrl) return;
+
+    // N'envoyer que pour les patients Accueil (format CHU-YYYY-NNNNN)
+    const patientId = dossier.patientId ?? '';
+    if (!/^CHU-\d{4}-\d+$/.test(patientId)) return;
+
+    let dateExamenSouhaitee: string | null = null;
+    if (data.prescriptionId) {
+      const rdv = await this.prisma.rendezVous.findFirst({
+        where: { prescriptionId: data.prescriptionId },
+        select: { dateHeureDebut: true },
+      });
+      if (rdv) dateExamenSouhaitee = rdv.dateHeureDebut.toISOString();
+    }
+
+    const payload = {
+      patientId,
+      sourceServiceId: getEndoscopieServiceId(),
+      sourceServiceName: 'Endoscopie',
+      sourceReferenceType: 'dossier-cpa',
+      sourceReferenceId: dossier.id,
+      typeAnesthesie: dossier.typeAnesthesie ?? 'Générale',
+      motif: dossier.observations ?? '',
+      urgence: 4,
+      ...(dateExamenSouhaitee && { dateExamenSouhaitee }),
+    };
+
+    const res = await fetch(`${blocUrl}/demandes-cpa-externes/receive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      const json = await res.json() as { id?: string };
+      if (json.id) {
+        await this.prisma.dossierCPA.update({
+          where: { id: dossier.id },
+          data: { blocDemandeId: json.id },
+        });
+      }
+    }
   }
 
   async updateDossierCpa(

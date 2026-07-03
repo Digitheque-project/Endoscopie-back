@@ -6,6 +6,10 @@ import { getEndoscopieServiceId } from '../config/endoscopie-service';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
 import { InboxNotification } from './notification-inbox.types';
+import { PrismaService } from '../prisma/prisma.service';
+
+/** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
+const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
 
 const MAX_INBOX = 200;
 
@@ -14,6 +18,8 @@ export class NotificationInboxService {
   private readonly logger = new Logger(NotificationInboxService.name);
   private readonly items: InboxNotification[] = [];
   private readonly events$ = new Subject<InboxNotification>();
+
+  constructor(private readonly prisma: PrismaService) {}
 
   getWebhookSecret(): string | undefined {
     return process.env.NOTIFICATION_WEBHOOK_SECRET?.trim() || undefined;
@@ -39,7 +45,9 @@ export class NotificationInboxService {
     meta?: { source?: string },
   ): InboxNotification | null {
     const raw = dto as unknown as Record<string, unknown>;
-    if (!notificationMatchesServiceId(raw, getEndoscopieServiceId())) {
+    const isBlocNotif = BLOC_NOTIFICATION_TYPES.has(dto.type);
+
+    if (!isBlocNotif && !notificationMatchesServiceId(raw, getEndoscopieServiceId())) {
       this.logger.debug(
         `Notification ignorée (hors service Endoscopie): ${dto.type} ${dto.motif}`,
       );
@@ -53,7 +61,65 @@ export class NotificationInboxService {
     }
     this.events$.next(item);
     this.logger.log(`Notification reçue [${item.type}] ${item.motif}`);
+
+    // Mise à jour automatique du dossier CPA depuis le Bloc Opératoire
+    if (isBlocNotif && dto.entiteRefId) {
+      this.handleBlocNotification(dto).catch((err) =>
+        this.logger.error(`Erreur MAJ dossier-cpa [${dto.type}]: ${err}`),
+      );
+    }
+
     return item;
+  }
+
+  private async handleBlocNotification(dto: ReceiveNotificationDto) {
+    const dossierId = dto.entiteRefId;
+    if (!dossierId) return;
+
+    const dossier = await this.prisma.dossierCPA.findUnique({
+      where: { id: dossierId },
+    });
+    if (!dossier) {
+      this.logger.warn(`Dossier CPA introuvable pour entiteRefId=${dossierId}`);
+      return;
+    }
+
+    const payload = dto.payload ?? {};
+
+    if (dto.type === 'CPA_RESULTAT') {
+      const decision = payload['decision'] as string | undefined;
+      const dateCpaRaw = payload['dateCpa'] as string | undefined;
+      const observations = payload['observations'] as string | undefined;
+
+      const statutMap: Record<string, string> = {
+        APTE: 'CPA Favorable',
+        INAPTE: 'CPA Défavorable',
+        REPORT: 'CPA Reportée',
+      };
+
+      await this.prisma.dossierCPA.update({
+        where: { id: dossierId },
+        data: {
+          ...(decision && { decisionCpa: decision, statut: statutMap[decision] ?? dossier.statut }),
+          ...(dateCpaRaw && { dateCpa: new Date(dateCpaRaw) }),
+          ...(observations && { observations }),
+        },
+      });
+      this.logger.log(`CPA_RESULTAT appliqué au dossier ${dossierId}: ${decision}`);
+    }
+
+    if (dto.type === 'VPA_REALISEE') {
+      const dateVpaRaw = payload['dateVpa'] as string | undefined;
+      await this.prisma.dossierCPA.update({
+        where: { id: dossierId },
+        data: {
+          statut: 'VPA Réalisée',
+          ...(dateVpaRaw && { dateVpa: new Date(dateVpaRaw) }),
+          dateValidation: dateVpaRaw ? new Date(dateVpaRaw) : new Date(),
+        },
+      });
+      this.logger.log(`VPA_REALISEE appliqué au dossier ${dossierId}`);
+    }
   }
 
   listInbox(limit = 50): InboxNotification[] {
