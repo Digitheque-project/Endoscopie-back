@@ -87,7 +87,6 @@ async function main() {
           patientId: patient.id,
           medecinId: medecin.id,
           typeExamen: examType?.name ?? 'Fibroscopie digestive haute',
-          typeExamenRefId: examType?.id ?? null,
           motif: MOTIFS[Math.floor(Math.random() * MOTIFS.length)],
           priorite: PRIORITES[Math.floor(Math.random() * PRIORITES.length)],
           statut: 'A planifier',

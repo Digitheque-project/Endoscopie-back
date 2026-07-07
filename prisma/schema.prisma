@@ -3,9 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 model Medecin {
@@ -15,8 +14,8 @@ model Medecin {
   specialite    String?
   role          String?
   dossiersCPA   DossierCPA[]
-  prescriptions Prescription[]
   rendezVous    RendezVous[]
+  prescriptions Prescription[]
 }
 
 model Salle {
@@ -34,36 +33,33 @@ model Salle {
 
 model Prescription {
   id                  String               @id @default(uuid())
+  // Lien vers la prescription dans le service externe (source de vérité)
+  externalId          String?              @unique
+  serviceId           String
   patientId           String
-  medecinId           String
-  typeExamen          String
+  medecinId           String               @default("")
+  typeExamen          String               @default("Endoscopie")
   motif               String?
   priorite            String               @default("Standard")
   statut              String               @default("A planifier")
   dateDemande         DateTime             @default(now())
-  serviceId           String
-  typeExamenRefId     String?
   checklistApres      ChecklistApres?
   checklistAvant      ChecklistAvant?
   dossierCPA          DossierCPA?
   operationEndoscopie OperationEndoscopie?
-  medecinPrescripteur Medecin              @relation(fields: [medecinId], references: [id])
-  typeExamenRef       EndoscopyExamType?   @relation(fields: [typeExamenRefId], references: [id])
-  rendezVous          RendezVous?
   resultatEndoscopie  ResultatEndoscopie?
+  rendezVous          RendezVous?
+  medecinPrescripteur Medecin?             @relation(fields: [medecinId], references: [id])
 
-  @@index([medecinId])
-  @@index([patientId])
   @@index([serviceId])
-  @@index([typeExamenRefId])
+  @@index([patientId])
 }
 
 model EndoscopyExamType {
-  id            String         @id @default(uuid())
-  name          String         @unique
-  code          String?        @unique
-  description   String?
-  prescriptions Prescription[]
+  id          String  @id @default(uuid())
+  name        String  @unique
+  code        String? @unique
+  description String?
 }
 
 model RendezVous {
@@ -150,7 +146,7 @@ model OperationEndoscopie {
   observationNotes String?
   medicalNotes     String?
   patientId        String
-  voiceTranscripts Json?
+  voiceTranscripts String?
   prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
@@ -191,7 +187,7 @@ model ResultatEndoscopie {
   mainDiagnosis    String?
   observations     String?
   patientId        String
-  details          Json?
+  details          String?
   prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])

@@ -39,3 +39,11 @@ export function getAccueilApiUrl(): string {
 export function getBlocApiUrl(): string | null {
   return process.env.BLOC_API_URL?.replace(/\/$/, '') || null;
 }
+
+/** URL de l'API prescription mutualisée du CHU. */
+export function getPrescriptionExtApiUrl(): string {
+  return (
+    process.env.PRESCRIPTION_EXT_API_URL?.replace(/\/$/, '') ||
+    'https://prescriptionback-production.up.railway.app/prescriptions'
+  );
+}
