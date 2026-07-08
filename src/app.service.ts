@@ -253,7 +253,7 @@ export class AppService {
     const localRecords = extIds.length
       ? await this.prisma.prescription.findMany({
           where: { externalId: { in: extIds }, serviceId },
-          include: { rendezVous: true, checklistApres: true },
+          include: { rendezVous: true, checklistApres: true, dossierCPA: true },
         })
       : [];
     const localByExtId = new Map(localRecords.map((r) => [r.externalId!, r]));
@@ -278,6 +278,7 @@ export class AppService {
         medecinPrescripteur: null,
         rendezVous: local?.rendezVous ?? null,
         checklistApres: local?.checklistApres ?? null,
+        dossierCPA: local?.dossierCPA ?? null,
         patient: ext.patientId ? (patientMap.get(ext.patientId) ?? null) : null,
       };
     });
@@ -423,7 +424,9 @@ export class AppService {
         checklistApresValide,
         resultatDisponible,
         statutGlobal:
-          checklistAvantValide && checklistApresValide && resultatDisponible
+          p.statut === 'Annulé'
+            ? 'Annulé'
+            : p.statut === 'Terminé' || (checklistAvantValide && checklistApresValide && resultatDisponible)
             ? 'Complet'
             : 'En cours',
       };
@@ -970,6 +973,87 @@ export class AppService {
     return { avantTotal, avantValide, apresTotal, apresValide };
   }
 
+  /**
+   * Statistiques agrégées pour le rapport : patients reçus, répartition homme/femme/enfant,
+   * décompte par type d'examen, sur une semaine ou un mois. "Patient reçu" = checklist
+   * après-examen validée dans la période (signal fiable que l'examen a eu lieu).
+   */
+  async getRapportStats(
+    period: 'week' | 'month' = 'week',
+    dateRef?: string,
+    serviceIdOverride?: string,
+  ) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const refDate = dateRef ? new Date(dateRef) : new Date();
+    const { start, end, label } = this.computeRapportPeriod(period, refDate);
+
+    const checklists = await this.prisma.checklistApres.findMany({
+      where: {
+        serviceId,
+        estValide: true,
+        dateCreation: { gte: start, lte: end },
+      },
+      select: {
+        patientId: true,
+        prescription: { select: { typeExamen: true } },
+      },
+    });
+
+    const typeCounts = checklists.reduce<Record<string, number>>((acc, row) => {
+      const type = row.prescription?.typeExamen || 'Non spécifié';
+      acc[type] = (acc[type] ?? 0) + 1;
+      return acc;
+    }, {});
+    const parTypeExamen = Object.entries(typeCounts)
+      .map(([typeExamen, count]) => ({ typeExamen, count }))
+      .sort((a, b) => b.count - a.count || a.typeExamen.localeCompare(b.typeExamen));
+
+    const patientIds = [...new Set(checklists.map((c) => c.patientId).filter(Boolean))];
+    const allPatients = await this.getAccueilPatients();
+    const patientMap = new Map(allPatients.map((p) => [p.id, this.toPatientView(p)]));
+
+    const parGenre = { homme: 0, femme: 0, enfant: 0, nonRenseigne: 0 };
+    for (const patientId of patientIds) {
+      const patient = patientMap.get(patientId);
+      const age = patient?.dateNaissance
+        ? Math.floor((Date.now() - patient.dateNaissance.getTime()) / (365.25 * 24 * 60 * 60 * 1000))
+        : null;
+      if (age !== null && age < 18) {
+        parGenre.enfant += 1;
+      } else if (patient?.sexe === 'M') {
+        parGenre.homme += 1;
+      } else if (patient?.sexe === 'F') {
+        parGenre.femme += 1;
+      } else {
+        parGenre.nonRenseigne += 1;
+      }
+    }
+
+    return {
+      periode: { type: period, start, end, label },
+      totalPatients: patientIds.length,
+      parGenre,
+      parTypeExamen,
+    };
+  }
+
+  /** Semaine (lundi → dimanche) ou mois calendaire contenant `refDate`. */
+  private computeRapportPeriod(period: 'week' | 'month', refDate: Date) {
+    if (period === 'month') {
+      const start = new Date(refDate.getFullYear(), refDate.getMonth(), 1, 0, 0, 0, 0);
+      const end = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0, 23, 59, 59, 999);
+      const label = start.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+      return { start, end, label: label.charAt(0).toUpperCase() + label.slice(1) };
+    }
+    const day = refDate.getDay(); // 0 = dimanche
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const start = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate() + diffToMonday, 0, 0, 0, 0);
+    const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6, 23, 59, 59, 999);
+    const fmt = (d: Date) => d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+    const label = `Semaine du ${fmt(start)} au ${fmt(end)} ${end.getFullYear()}`;
+    return { start, end, label };
+  }
+
   async getRendezVousCountsByMonth(year: number, month: number, serviceIdOverride?: string) {
     // Get start and end of month in UTC
     const startOfMonth = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
@@ -1389,7 +1473,7 @@ export class AppService {
       estValide: data.estValide || false,
     };
 
-    return this.prisma.checklistApres.upsert({
+    const checklist = await this.prisma.checklistApres.upsert({
       where: { prescriptionId: data.prescriptionId },
       update: checklistData,
       create: {
@@ -1399,6 +1483,36 @@ export class AppService {
         patientId: data.patientId,
       },
     });
+
+    await this.markTermineIfComplete(data.prescriptionId);
+
+    return checklist;
+  }
+
+  /**
+   * Marque la prescription (et son rendez-vous) "Terminé" dès que la checklist
+   * après-examen est validée ET que le compte rendu existe — signal fiable réutilisé
+   * par l'archive et le rapport, au lieu de le redéduire à chaque affichage.
+   */
+  private async markTermineIfComplete(prescriptionId: string) {
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: { checklistApres: true, resultatEndoscopie: true, rendezVous: true },
+    });
+    if (!prescription) return;
+    if (!prescription.checklistApres?.estValide || !prescription.resultatEndoscopie) return;
+    if (prescription.statut === 'Terminé') return;
+
+    await this.prisma.prescription.update({
+      where: { id: prescriptionId },
+      data: { statut: 'Terminé' },
+    });
+    if (prescription.rendezVous) {
+      await this.prisma.rendezVous.update({
+        where: { id: prescription.rendezVous.id },
+        data: { statut: 'Terminé' },
+      });
+    }
   }
 
   async getResultat(
@@ -1449,7 +1563,7 @@ export class AppService {
       details: Object.keys(details).length ? JSON.stringify(details) : undefined,
     };
 
-    return this.prisma.resultatEndoscopie.upsert({
+    const resultat = await this.prisma.resultatEndoscopie.upsert({
       where: { prescriptionId: data.prescriptionId },
       update: resultatData,
       create: {
@@ -1459,6 +1573,10 @@ export class AppService {
         patientId: data.patientId,
       },
     });
+
+    await this.markTermineIfComplete(data.prescriptionId);
+
+    return resultat;
   }
 
   async listResultats(serviceIdOverride?: string) {
@@ -1539,14 +1657,14 @@ export class AppService {
         dateHeureDebut,
         typeAnesthesie: data.typeAnesthesie?.type || null,
         notesCliniques: rendezVous.instructionsPatient,
-        statut: rendezVous.confirmeParAdmin ? 'Confirme' : 'Prevu',
+        statut: rendezVous.confirmeParAdmin ? 'Confirmé' : 'Prevu',
         serviceId,
       },
       update: {
         dateHeureDebut,
         typeAnesthesie: data.typeAnesthesie?.type || null,
         notesCliniques: rendezVous.instructionsPatient,
-        statut: rendezVous.confirmeParAdmin ? 'Confirme' : 'Prevu',
+        statut: rendezVous.confirmeParAdmin ? 'Confirmé' : 'Prevu',
       },
     });
 
@@ -1646,7 +1764,7 @@ export class AppService {
               : 'A assigner',
             dureeEstimee: '30 minutes',
             instructionsPatient: prescription.rendezVous.notesCliniques || '',
-            confirmeParAdmin: prescription.rendezVous.statut === 'Confirme',
+            confirmeParAdmin: prescription.rendezVous.statut === 'Confirmé',
             confirmeParAdminLe: prescription.rendezVous.dateHeureDebut?.toISOString(),
           }
         : null,

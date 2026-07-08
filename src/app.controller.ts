@@ -453,6 +453,21 @@ export class AppController {
     return this.appService.getChecklistsProgressToday(serviceId);
   }
 
+  // ——— Rapport ———
+  @Get('api/rapport/stats')
+  @ApiTags('Rapport')
+  @ApiOperation({ summary: 'Statistiques agrégées (patients reçus, genre, types d\'examen) sur une période' })
+  @ApiQuery({ name: 'period', required: false, enum: ['week', 'month'] })
+  @ApiQuery({ name: 'date', required: false, description: 'Date de référence ISO (défaut: aujourd\'hui)' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getRapportStats(
+    @Query('period') period?: 'week' | 'month',
+    @Query('date') date?: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getRapportStats(period, date, serviceId);
+  }
+
   // ——— Résultats ———
   @Get('api/resultats')
   @ApiTags('Resultats')

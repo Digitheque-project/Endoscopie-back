@@ -96,6 +96,13 @@ export class NotificationInboxService {
         INAPTE: 'CPA Défavorable',
         REPORT: 'CPA Reportée',
       };
+      // Statut cascadé sur Prescription/RendezVous pour que le patient ne reste pas
+      // bloqué indéfiniment sur "CPA demandée" côté Major/Médecin.
+      const cascadeStatutMap: Record<string, string> = {
+        APTE: 'Confirmé',
+        INAPTE: 'CPA Défavorable',
+        REPORT: 'CPA Reportée',
+      };
 
       await this.prisma.dossierCPA.update({
         where: { id: dossierId },
@@ -105,6 +112,19 @@ export class NotificationInboxService {
           ...(observations && { observations }),
         },
       });
+
+      if (decision && cascadeStatutMap[decision] && dossier.prescriptionId) {
+        const cascadeStatut = cascadeStatutMap[decision];
+        await this.prisma.prescription.update({
+          where: { id: dossier.prescriptionId },
+          data: { statut: cascadeStatut },
+        });
+        await this.prisma.rendezVous.updateMany({
+          where: { prescriptionId: dossier.prescriptionId },
+          data: { statut: cascadeStatut },
+        });
+      }
+
       this.logger.log(`CPA_RESULTAT appliqué au dossier ${dossierId}: ${decision}`);
     }
 

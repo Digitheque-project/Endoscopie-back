@@ -1,38 +1,27 @@
-/** ID du service « Endoscopie » dans l'API CHU (Railway). */
-export const DEFAULT_ENDOSCOPIE_SERVICE_ID =
-  '38f39d38-152e-495b-8c48-28937750d9eb';
-
-/** chuId réel de « CHU Andrainjato Fianarantsoa » côté Service-CHU/Accueil. */
-export const DEFAULT_ENDOSCOPIE_CHU_ID = '72d49761-2a65-446d-b025-15a74cac1ad4';
+function requireEnv(name: string): string {
+  const value = process.env[name]?.trim().replace(/\/$/, '');
+  if (!value) {
+    throw new Error(
+      `Variable d'environnement manquante : ${name}. Vérifiez votre .env (voir .env.example).`,
+    );
+  }
+  return value;
+}
 
 export function getEndoscopieServiceId(override?: string): string {
-  return (
-    override?.trim() ||
-    process.env.ENDOSCOPIE_SERVICE_ID?.trim() ||
-    DEFAULT_ENDOSCOPIE_SERVICE_ID
-  );
+  return override?.trim() || requireEnv('ENDOSCOPIE_SERVICE_ID');
 }
 
 export function getEndoscopieChuId(override?: string): string {
-  return (
-    override?.trim() ||
-    process.env.ENDOSCOPIE_CHU_ID?.trim() ||
-    DEFAULT_ENDOSCOPIE_CHU_ID
-  );
+  return override?.trim() || requireEnv('ENDOSCOPIE_CHU_ID');
 }
 
 export function getChuApiUrl(): string {
-  return (
-    process.env.CHU_API_URL?.replace(/\/$/, '') ||
-    'https://service-chu-back-production-d6a8.up.railway.app'
-  );
+  return requireEnv('CHU_API_URL');
 }
 
 export function getAccueilApiUrl(): string {
-  return (
-    process.env.ACCUEIL_API_URL?.replace(/\/$/, '') ||
-    'https://acceuil-back-production.up.railway.app'
-  );
+  return requireEnv('ACCUEIL_API_URL');
 }
 
 /** URL de l'API du service Bloc Opératoire (intégration CPA/VPA). */
@@ -42,8 +31,5 @@ export function getBlocApiUrl(): string | null {
 
 /** URL de l'API prescription mutualisée du CHU. */
 export function getPrescriptionExtApiUrl(): string {
-  return (
-    process.env.PRESCRIPTION_EXT_API_URL?.replace(/\/$/, '') ||
-    'https://prescriptionback-production.up.railway.app/prescriptions'
-  );
+  return requireEnv('PRESCRIPTION_EXT_API_URL');
 }

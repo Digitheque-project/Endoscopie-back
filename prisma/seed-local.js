@@ -165,12 +165,15 @@ async function main() {
 
   console.log('📅 Création des rendez-vous demo (programme du jour)...');
   let rdvCount = 0;
+  // typeAnesthesie ne doit être renseigné que si le médecin a déjà tranché
+  // (statut "Décision rendue" ou plus avancé) — sinon la prescription doit
+  // rester "à décider" côté Médecin (voir medecinRowState côté front).
   const rdvSlots = [
-    { heure: 8,  typeAnesthesie: 'Locale',   statut: 'Planifié' },
-    { heure: 9,  typeAnesthesie: 'Générale',  statut: 'Planifié' },
-    { heure: 10, typeAnesthesie: 'Locale',    statut: 'Confirmé' },
-    { heure: 11, typeAnesthesie: 'Locale',    statut: 'Planifié' },
-    { heure: 14, typeAnesthesie: 'Générale',  statut: 'Planifié' },
+    { heure: 8,  typeAnesthesie: null,       statut: 'Planifié' },
+    { heure: 9,  typeAnesthesie: null,       statut: 'Planifié' },
+    { heure: 10, typeAnesthesie: 'Locale',   statut: 'Confirmé' },
+    { heure: 11, typeAnesthesie: 'Locale',   statut: 'Décision rendue' },
+    { heure: 14, typeAnesthesie: 'Générale', statut: 'Décision rendue' },
   ];
 
   const rdvToday = prescriptions.slice(0, rdvSlots.length);
@@ -199,6 +202,9 @@ async function main() {
   for (let i = 0; i < rdvFutures.length; i++) {
     const p = rdvFutures[i];
     const debut = daysFromNow(i + 1, 8 + (i % 4));
+    // Le rendez-vous doit rester cohérent avec le statut déjà attribué à la
+    // prescription : une décision n'existe que si le statut le reflète.
+    const decisionDejaPrise = p.statut === 'Décision rendue' || p.statut === 'Confirmé';
     await prisma.rendezVous.create({
       data: {
         serviceId: SERVICE_ID,
@@ -208,8 +214,8 @@ async function main() {
         salleId: salles[i % salles.length].id,
         dateHeureDebut: debut,
         dateHeureFin: new Date(debut.getTime() + 30 * 60000),
-        typeAnesthesie: i % 2 === 0 ? 'Générale' : 'Locale',
-        statut: 'Planifié',
+        typeAnesthesie: decisionDejaPrise ? (i % 2 === 0 ? 'Générale' : 'Locale') : null,
+        statut: p.statut,
       },
     });
     rdvCount++;
@@ -217,7 +223,29 @@ async function main() {
   console.log(`  ✓ ${rdvCount} rendez-vous créés`);
 
   console.log('⚡ Création d\'opérations interrompues (demo panne électrique)...');
-  for (const p of prescriptions.slice(0, Math.min(2, prescriptions.length))) {
+  // Ne peut concerner que des patients déjà "prêts" (checklist avant faite,
+  // décision d'anesthésie prise) — indices 2 et 3 de rdvToday, pas 0/1 qui
+  // sont encore "à décider" dans ce jeu de données.
+  const interrompues = [prescriptions[2], prescriptions[3]].filter(Boolean);
+  for (const p of interrompues) {
+    await prisma.checklistAvant.create({
+      data: {
+        serviceId: SERVICE_ID,
+        prescriptionId: p.id,
+        patientId: p.patient.id,
+        identiteVerifiee: true,
+        procedureConfirmee: true,
+        materielDisponible: true,
+        risquesVerifies: true,
+        jeuneRespecte: true,
+        preparationAdequate: true,
+        validationCollegiale: true,
+        anticoagulantsArretes: true,
+        antibioprophylaxie: true,
+        tenueAppropriee: true,
+        estValide: true,
+      },
+    }).catch(() => null);
     await prisma.operationEndoscopie.create({
       data: {
         serviceId: SERVICE_ID,
