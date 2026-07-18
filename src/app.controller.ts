@@ -139,6 +139,20 @@ export class AppController {
     return this.appService.getPatientById(id);
   }
 
+  @Get('api/patients/:id/parcours-medical')
+  @ApiTags('Patients')
+  @ApiOperation({
+    summary: "Parcours médical complet du patient (dossier patient CHU)",
+    description:
+      "Suivis et diagnostics du patient au-delà de l'Endoscopie, depuis le microservice Dossier Patient CHU. " +
+      "Ce service n'est pas encore relié (token propre non fourni) : renvoie `available: false` et des listes vides " +
+      "jusqu'à ce qu'il le soit, sans jamais échouer.",
+  })
+  @ApiParam({ name: 'id', description: 'Identifiant Accueil du patient' })
+  async getPatientTraceability(@Param('id') id: string) {
+    return this.appService.getPatientTraceability(id);
+  }
+
   // ——— Types d'examen ———
   @Get('api/exam-types')
   @ApiTags('Configuration')
@@ -174,7 +188,11 @@ export class AppController {
   // ——— Prescriptions ———
   @Get('api/prescriptions')
   @ApiTags('Prescriptions')
-  @ApiOperation({ summary: 'Lister toutes les prescriptions' })
+  @ApiOperation({
+    summary: 'Lister toutes les prescriptions',
+    description:
+      "Une prescription externe multi-examens (tableau `demandes`, ex. venant d'un autre service) est automatiquement éclatée : chaque examen apparaît ici comme sa propre prescription, avec son propre statut. Les prescriptions issues d'une même demande externe partagent le même prescriptionExternalId.",
+  })
   @ApiQuery({ name: 'serviceId', required: false })
   async getPrescriptions(@Query('serviceId') serviceId?: string) {
     return this.appService.getPrescriptions(serviceId);
@@ -186,6 +204,18 @@ export class AppController {
   @ApiQuery({ name: 'serviceId', required: false })
   async getPendingReports(@Query('serviceId') serviceId?: string) {
     return this.appService.getPendingReports(serviceId);
+  }
+
+  @Get('api/prescriptions/multi-examens')
+  @ApiTags('Prescriptions')
+  @ApiOperation({
+    summary: 'Lister les prescriptions issues d’une demande à examens multiples',
+    description:
+      "Renvoie les prescriptions dont la demande d'origine (service externe, tableau `demandes`) comportait plusieurs examens. Chaque examen reste une prescription distincte et planifiable indépendamment ; les prescriptions d'un même groupe partagent le même prescriptionExternalId.",
+  })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPrescriptionsMultiExamens(@Query('serviceId') serviceId?: string) {
+    return this.appService.getPrescriptionsMultiExamens(serviceId);
   }
 
   @Get('api/prescriptions/:id')
@@ -205,9 +235,14 @@ export class AppController {
   @ApiOperation({
     summary: '[POST] Créer une prescription',
     operationId: 'createPrescription',
+    description:
+      "Pour une prescription multi-examens (ex. venant d'un autre service), renseigner typeExamensSupplementaires en plus de typeExamen : chaque examen est envoyé comme une demande distincte au service externe et miré localement comme sa propre prescription.",
   })
   @ApiBody({ type: CreatePrescriptionDto })
-  @ApiOkResponse({ description: 'Prescription créée' })
+  @ApiOkResponse({
+    description:
+      "Prescription créée. Renvoie un objet unique pour un seul examen, ou un tableau de prescriptions (une par examen) si typeExamensSupplementaires a été renseigné.",
+  })
   async createPrescription(@Body() data: CreatePrescriptionDto) {
     return this.appService.createPrescription(data);
   }
@@ -227,20 +262,42 @@ export class AppController {
     return this.appService.updatePrescription(id, data);
   }
 
+  @Get('api/archives/types-examen')
+  @ApiTags('Archives')
+  @ApiOperation({
+    summary: "Types d'examen distincts réellement présents dans les archives",
+    description:
+      "À utiliser pour peupler le filtre \"Type d'examen\" de l'archive — contrairement à /api/exam-types (catalogue figé), " +
+      "reflète les valeurs exactes stockées sur les prescriptions (évite les variantes orthographiques non reconnues par un filtre exact).",
+  })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getArchiveTypesExamen(@Query('serviceId') serviceId?: string) {
+    return this.appService.getArchiveTypesExamen(serviceId);
+  }
+
   @Get('api/archives')
   @ApiTags('Archives')
   @ApiOperation({ summary: 'Rechercher les dossiers patients archivés (prescription + CPA + checklists + résultat)' })
   @ApiQuery({ name: 'nom', required: false, description: 'Recherche par nom ou prénom du patient' })
   @ApiQuery({ name: 'dateFrom', required: false, description: 'Date de début (YYYY-MM-DD)' })
   @ApiQuery({ name: 'dateTo', required: false, description: 'Date de fin (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'typeExamen', required: false, description: "Filtrer par type d'examen (ex. Coloscopie)" })
+  @ApiQuery({ name: 'typeAnesthesie', required: false, description: 'Filtrer par type d\'anesthésie (Locale ou Générale)' })
+  @ApiQuery({ name: 'motCle', required: false, description: 'Recherche libre dans le texte du compte rendu (observations, conclusion, diagnostic...)' })
   @ApiQuery({ name: 'serviceId', required: false })
   async getArchives(
     @Query('nom') nom?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('typeExamen') typeExamen?: string,
+    @Query('typeAnesthesie') typeAnesthesie?: string,
+    @Query('motCle') motCle?: string,
     @Query('serviceId') serviceId?: string,
   ) {
-    return this.appService.getArchives({ nom, dateFrom, dateTo }, serviceId);
+    return this.appService.getArchives(
+      { nom, dateFrom, dateTo, typeExamen, typeAnesthesie, motCle },
+      serviceId,
+    );
   }
 
   // ——— Dossiers CPA ———

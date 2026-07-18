@@ -15,4 +15,7 @@ export class UpdateRendezVousDto {
 
   @ApiPropertyOptional({ example: '2026-07-30T09:15:00.000' })
   dateHeureFin?: string;
+
+  @ApiPropertyOptional({ description: "Second examen réalisé dans la même séance (cas d'une double opération)", example: 'Coloscopie' })
+  typeExamenSecondaire?: string;
 }

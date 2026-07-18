@@ -1,9 +1,8 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { getEndoscopieServiceId } from '../config/endoscopie-service';
+import { getEndoscopieAuthServiceId, getEndoscopieServiceId } from '../config/endoscopie-service';
 import { getNotificationApiUrl } from '../config/notification-service';
 import { CreateNotificationPayload } from './notification.types';
 import { NotificationInboxService } from './notification-inbox.service';
-import { filterNotificationsByServiceId } from './notification-filter.util';
 
 @Injectable()
 export class NotificationService {
@@ -17,18 +16,45 @@ export class NotificationService {
     return getNotificationApiUrl();
   }
 
+  /**
+   * Envoie une notification temps réel à tout le service Endoscopie via
+   * POST /notifications/service (voir notification-back-xrl2.onrender.com/api/docs) —
+   * ce service notifie par serviceId + WebSocket, pas par le modèle
+   * emitter/recipient/motif utilisé auparavant. On traduit notre payload interne
+   * vers son schéma (NotifyServiceDto), et on garde tout le détail métier
+   * (patientId, entiteRef*, urgence, channels...) dans `data` pour ne rien perdre.
+   */
   async createNotification(
     payload: CreateNotificationPayload,
   ): Promise<unknown | null> {
+    const body = {
+      serviceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
+      title: payload.recipientName || payload.emitterName || 'Notification Endoscopie',
+      message: payload.motif,
+      type: payload.type || 'info',
+      source: payload.emitter || 'endoscopie-back',
+      data: {
+        ...(payload.payload ?? {}),
+        motif: payload.motif,
+        urgence: payload.urgence,
+        patientId: payload.patientId,
+        entiteRefType: payload.entiteRefType,
+        entiteRefId: payload.entiteRefId,
+        channels: payload.channels,
+        departmentSource: payload.departmentSource,
+        departmentTarget: payload.departmentTarget,
+      },
+    };
     try {
-      const res = await fetch(`${this.baseUrl}/notifications`, {
+      const res = await fetch(`${this.baseUrl}/notifications/service`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const text = await res.text();
-        this.logger.warn(`POST /notifications ${res.status}: ${text}`);
+        this.logger.warn(`POST /notifications/service ${res.status}: ${text}`);
+        this.pushToInbox({}, payload);
         return null;
       }
       const created = (await res.json()) as Record<string, unknown>;
@@ -36,12 +62,22 @@ export class NotificationService {
       return created;
     } catch (error) {
       this.logger.warn(
-        `POST /notifications failed: ${error instanceof Error ? error.message : error}`,
+        `POST /notifications/service failed: ${error instanceof Error ? error.message : error}`,
       );
+      // Le service externe est indisponible ou injoignable : on pousse quand même
+      // dans la boîte locale pour que la cloche/le flux temps réel restent fiables.
+      this.pushToInbox({}, payload);
       return null;
     }
   }
 
+  /**
+   * Liste les notifications pour l'affichage initial de la cloche (au chargement,
+   * avant que le flux SSE local ne prenne le relais). Le nouveau service
+   * notification n'expose plus de filtrage par service (GET /notifications
+   * renvoie tout, tous services confondus) — on lit donc la boîte locale, déjà
+   * filtrée pour Endoscopie au moment de la réception (voir NotificationInboxService.receive).
+   */
   async listNotifications(
     status = 'ENVOYE',
     serviceId?: string,
@@ -52,47 +88,11 @@ export class NotificationService {
     items: Record<string, unknown>[];
   }> {
     const sid = getEndoscopieServiceId(serviceId);
-    try {
-      const res = await fetch(
-        `${this.baseUrl}/notifications?status=${encodeURIComponent(status)}`,
-      );
-
-      // If remote service returns non-OK, log and return empty list instead of throwing
-      if (!res.ok) {
-        const text = await res.text().catch(() => '<no-body>');
-        this.logger.warn(`GET /notifications ${res.status}: ${text}`);
-        return { serviceId: sid, status, total: 0, items: [] };
-      }
-
-      // Parse body defensively: try json, fallback to text and handle parse errors
-      let data: unknown;
-      try {
-        data = await res.json();
-      } catch (parseErr) {
-        const raw = await res.text().catch(() => '');
-        this.logger.warn(
-          `Failed to parse /notifications response JSON: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}; rawLength=${raw.length}`,
-        );
-        return { serviceId: sid, status, total: 0, items: [] };
-      }
-
-      const list = (
-        Array.isArray(data)
-          ? data
-          : ((data as { items?: unknown[] })?.items ?? [])
-      ) as Record<string, unknown>[];
-
-      const items = filterNotificationsByServiceId(list, sid);
-      return {
-        serviceId: sid,
-        status,
-        total: items.length,
-        items,
-      };
-    } catch (err) {
-      this.logger.warn(`listNotifications failed: ${err instanceof Error ? err.message : String(err)}`);
-      return { serviceId: sid, status, total: 0, items: [] };
-    }
+    const items = (this.inbox?.listInbox(100) ?? []).map((item) => ({
+      ...item,
+      createdAt: item.receivedAt,
+    }));
+    return { serviceId: sid, status, total: items.length, items };
   }
 
   async checkHealth(): Promise<{ ok: boolean; status?: number }> {
@@ -112,7 +112,7 @@ export class NotificationService {
     try {
       const mergedPayload = {
         ...(fallback.payload ?? {}),
-        ...((remote.payload as Record<string, unknown>) ?? {}),
+        ...((remote.data as Record<string, unknown>) ?? {}),
         sourceServiceId: getEndoscopieServiceId(),
         sourceServiceName: 'Unité Endoscopie',
       };

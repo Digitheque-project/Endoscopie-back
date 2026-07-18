@@ -73,6 +73,8 @@ model RendezVous {
   typeAnesthesie String?
   statut         String        @default("Prevu")
   notesCliniques String?
+  // Examen additionnel réalisé dans la même séance (cas des patients ayant une double opération).
+  typeExamenSecondaire String?
   serviceId      String
   medecin        Medecin?      @relation(fields: [medecinId], references: [id])
   prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
@@ -138,16 +140,19 @@ model ChecklistAvant {
 }
 
 model OperationEndoscopie {
-  id               String       @id @default(uuid())
-  prescriptionId   String       @unique
-  serviceId        String
-  dateCreation     DateTime     @default(now())
-  dateModification DateTime     @updatedAt
-  observationNotes String?
-  medicalNotes     String?
-  patientId        String
-  voiceTranscripts String?
-  prescription     Prescription @relation(fields: [prescriptionId], references: [id])
+  id                    String       @id @default(uuid())
+  prescriptionId        String       @unique
+  serviceId             String
+  dateCreation          DateTime     @default(now())
+  dateModification      DateTime     @updatedAt
+  observationNotes      String?
+  medicalNotes          String?
+  patientId             String
+  voiceTranscripts      String?
+  // Prescription post-acte rédigée par le médecin avant de passer à la check-list après,
+  // pour la phase de réveil. Sa présence sert aussi à présélectionner OUI/NON dans cette check-list.
+  prescriptionPostActe  String?
+  prescription          Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([prescriptionId])

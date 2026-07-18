@@ -22,6 +22,14 @@ export class CreatePrescriptionDto {
   @ApiProperty({ example: 'Coloscopie' })
   typeExamen: string;
 
+  @ApiPropertyOptional({
+    example: ['Fibroscopie'],
+    type: [String],
+    description:
+      "Examens supplémentaires demandés dans la même prescription (cas d'une prescription multi-examens, comme sur le service prescription externe). Chacun est créé comme une demande distincte et apparaît comme une prescription locale à part entière, au même titre que typeExamen.",
+  })
+  typeExamensSupplementaires?: string[];
+
   @ApiPropertyOptional({ example: 'Suivi post-polypectomie' })
   motif?: string;
 

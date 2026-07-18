@@ -15,4 +15,7 @@ export class SaveOperationDto {
 
   @ApiPropertyOptional({ example: [{ id: '1', content: 'hello', timestamp: '...' }] })
   voiceTranscripts?: any;
+
+  @ApiPropertyOptional({ example: 'Paracétamol 1g si douleur, à jeun 2h post-examen...' })
+  prescriptionPostActe?: string;
 }

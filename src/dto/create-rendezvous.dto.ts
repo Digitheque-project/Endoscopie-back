@@ -30,4 +30,7 @@ export class CreateRendezVousDto {
 
   @ApiPropertyOptional()
   notesCliniques?: string;
+
+  @ApiPropertyOptional({ description: "Second examen réalisé dans la même séance (cas d'une double opération)", example: 'Coloscopie' })
+  typeExamenSecondaire?: string;
 }
