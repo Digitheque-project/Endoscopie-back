@@ -10,29 +10,48 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Base de données déployée (Supabase Postgres) — à renseigner manuellement dans le
+      # dashboard Render. Jamais de SQLite (voir prisma/schema.prisma : provider postgresql).
+      - key: DATABASE_URL
+        sync: false
+      # Même URL Supabase, connexion directe port 5432 sans pgbouncer
+      - key: DIRECT_URL
+        sync: false
       - key: ENDOSCOPIE_SERVICE_ID
-        value: 38f39d38-152e-495b-8c48-28937750d9eb
+        value: 130ba793-3726-4f17-8790-db2f8c2d8783
       - key: ENDOSCOPIE_CHU_ID
         value: 72d49761-2a65-446d-b025-15a74cac1ad4
+      # ID service/CHU Endoscopie enregistrés dans le service d'authentification central —
+      # certaines prescriptions externes multi-services sont taguées avec ceux-ci plutôt
+      # qu'avec ENDOSCOPIE_SERVICE_ID/ENDOSCOPIE_CHU_ID ci-dessus.
+      - key: ENDOSCOPIE_AUTH_SERVICE_ID
+        value: ab97eaaa-9239-4f37-b5d7-d652c4231cc7
+      - key: ENDOSCOPIE_AUTH_CHU_ID
+        value: 1e5bbbb7-fa10-4d59-8848-2d0ce96a9394
       - key: CHU_API_URL
         value: https://service-chu-back-production-d6a8.up.railway.app
       - key: ACCUEIL_API_URL
         value: https://acceuil-back-production.up.railway.app
       - key: NOTIFICATION_API_URL
-        value: https://service-notification.onrender.com
+        value: https://notification-back-xrl2.onrender.com
       - key: NOTIFICATION_WEBHOOK_SECRET
         sync: false
-      # URL de l'API Bloc Opératoire (intégration CPA/VPA — à renseigner une fois fournie)
       - key: BLOC_API_URL
-        sync: false
+        value: https://bloc-prud.onrender.com/bloc/api
       - key: PRESCRIPTION_EXT_API_URL
         value: https://prescriptionback-production.up.railway.app/prescriptions
-      # À renseigner manuellement dans le dashboard Render avec votre URL Supabase
-      - key: DATABASE_URL
+      # Écosystème d'authentification CHU partagé — notre backend s'y connecte lui-même
+      # (compte de service) pour obtenir un token à joindre à ses appels serveur-à-serveur
+      # vers des services externes qui l'exigent (ex. PRESCRIPTION_EXT_API_URL ci-dessus).
+      - key: CHU_AUTH_LOGIN_URL
+        value: https://gateway-a33f.onrender.com
+      - key: CHU_SERVICE_ACCOUNT_EMAIL
         sync: false
-      # Même URL Supabase (connexion directe port 5432, sans pgbouncer)
-      - key: DIRECT_URL
+      - key: CHU_SERVICE_ACCOUNT_PASSWORD
         sync: false
+      - key: DOSSIER_PATIENT_API_URL
+        value: https://dossier-patient-back-ri3e.onrender.com/dossier-patient
+      # URL Render du front une fois déployé — nécessaire pour le CORS
       - key: FRONTEND_URL
         sync: false
     healthCheckPath: /
