@@ -60,3 +60,20 @@ export function getPrescriptionExtApiUrl(): string {
 export function getDossierPatientApiUrl(): string | null {
   return process.env.DOSSIER_PATIENT_API_URL?.trim().replace(/\/$/, '') || null;
 }
+
+/**
+ * URL de connexion de l'écosystème d'authentification partagé du CHU — le service
+ * prescription (et d'autres) accepte le même JWT que celui utilisé par nos utilisateurs
+ * pour se connecter à l'app. Notre backend s'y connecte lui-même (compte de service)
+ * pour obtenir un token à joindre à ses appels serveur-à-serveur.
+ */
+export function getAuthEcosystemLoginUrl(): string | null {
+  return process.env.CHU_AUTH_LOGIN_URL?.trim().replace(/\/$/, '') || null;
+}
+
+/** Identifiants du compte de service utilisé par le backend pour s'authentifier auprès de l'écosystème CHU. */
+export function getServiceAccountCredentials(): { email: string; password: string } | null {
+  const email = process.env.CHU_SERVICE_ACCOUNT_EMAIL?.trim();
+  const password = process.env.CHU_SERVICE_ACCOUNT_PASSWORD?.trim();
+  return email && password ? { email, password } : null;
+}

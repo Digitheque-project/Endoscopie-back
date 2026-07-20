@@ -40,6 +40,7 @@ model Prescription {
   medecinId           String               @default("")
   typeExamen          String               @default("Endoscopie")
   motif               String?
+  examensComplementaires String?
   priorite            String               @default("Standard")
   statut              String               @default("A planifier")
   dateDemande         DateTime             @default(now())

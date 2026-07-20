@@ -11,6 +11,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
 import {
   getAccueilApiUrl,
+  getAuthEcosystemLoginUrl,
   getBlocApiUrl,
   getChuApiUrl,
   getDossierPatientApiUrl,
@@ -19,6 +20,7 @@ import {
   getEndoscopieChuId,
   getEndoscopieServiceId,
   getPrescriptionExtApiUrl,
+  getServiceAccountCredentials,
 } from './config/endoscopie-service';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
@@ -119,6 +121,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private prescriptionWatcherInterval: ReturnType<typeof setInterval> | null = null;
   private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 20000;
 
+  /** JWT du compte de service, mis en cache — certains services externes (ex. prescription)
+   *  exigent le même token que celui utilisé par nos utilisateurs pour se connecter. */
+  private serviceAccountToken: { token: string; expiresAt: number } | null = null;
+
   constructor(
     private prisma: PrismaService,
     private notificationService: NotificationService,
@@ -159,16 +165,28 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       const nouvelles = current.filter((p) => p.id && !this.seenExternalPrescriptionIds!.has(p.id));
       if (nouvelles.length === 0) return;
 
+      // Regroupe les demandes issues d'une même prescription externe multi-examens (ex.
+      // Coloscopie + Fibroscopie pour le même patient) pour n'envoyer qu'UNE notification
+      // par prescription, pas une par examen — voir notifyPrescriptionCreated.
+      const groups = new Map<string, typeof nouvelles>();
       for (const demande of nouvelles) {
-        // Marqué comme vu immédiatement pour éviter une double notification si un
+        const key = demande.prescriptionExternalId || demande.id;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(demande);
+      }
+
+      for (const demandes of groups.values()) {
+        // Marquées comme vues immédiatement pour éviter une double notification si un
         // cycle suivant démarre avant la résolution complète de celui-ci.
-        this.seenExternalPrescriptionIds.add(demande.id);
+        for (const demande of demandes) {
+          this.seenExternalPrescriptionIds.add(demande.id);
+        }
         try {
-          const resolved = await this.getPrescriptionById(demande.id);
-          await this.notificationService.notifyPrescriptionCreated(resolved);
+          const resolvedList = await Promise.all(demandes.map((d) => this.getPrescriptionById(d.id)));
+          await this.notificationService.notifyPrescriptionCreated(resolvedList);
         } catch (e) {
           this.logger.warn(
-            `Notification échouée pour la nouvelle prescription ${demande.id}: ${e instanceof Error ? e.message : e}`,
+            `Notification échouée pour la nouvelle prescription ${demandes[0]?.id}: ${e instanceof Error ? e.message : e}`,
           );
         }
       }
@@ -255,11 +273,72 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  private serviceAccountLoginFailedUntil = 0;
+  private serviceAccountLoginInFlight: Promise<string | null> | null = null;
+
+  /**
+   * JWT du compte de service auprès de l'écosystème d'authentification CHU — certains
+   * services externes (ex. prescription) exigent le même token que celui utilisé par nos
+   * utilisateurs pour se connecter à l'app, y compris pour nos appels serveur-à-serveur.
+   * Mis en cache jusqu'à ~1 minute avant expiration, puis renouvelé automatiquement. Les
+   * appels concurrents partagent la même tentative de connexion, et un échec (ex. service
+   * d'auth temporairement indisponible) est mis en pause 30s avant de réessayer, pour ne
+   * pas marteler l'écosystème d'auth à chaque appel externe pendant une panne.
+   */
+  private async getServiceAccountToken(): Promise<string | null> {
+    const loginUrl = getAuthEcosystemLoginUrl();
+    const credentials = getServiceAccountCredentials();
+    if (!loginUrl || !credentials) return null;
+
+    if (this.serviceAccountToken && this.serviceAccountToken.expiresAt > Date.now() + 60_000) {
+      return this.serviceAccountToken.token;
+    }
+    if (Date.now() < this.serviceAccountLoginFailedUntil) return null;
+    if (this.serviceAccountLoginInFlight) return this.serviceAccountLoginInFlight;
+
+    this.serviceAccountLoginInFlight = (async () => {
+      try {
+        const res = await fetch(`${loginUrl}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(credentials),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) {
+          this.logger.warn(`Connexion du compte de service échouée (${res.status}) auprès de ${loginUrl}`);
+          this.serviceAccountLoginFailedUntil = Date.now() + 30_000;
+          return null;
+        }
+        const data = (await res.json()) as { accessToken?: string };
+        if (!data.accessToken) return null;
+
+        const payload = data.accessToken.split('.')[1];
+        const decoded = payload ? JSON.parse(Buffer.from(payload, 'base64').toString()) : null;
+        const expiresAt = decoded?.exp ? decoded.exp * 1000 : Date.now() + 15 * 60_000;
+
+        this.serviceAccountToken = { token: data.accessToken, expiresAt };
+        return data.accessToken;
+      } catch (e) {
+        this.logger.warn(`Erreur lors de la connexion du compte de service: ${e instanceof Error ? e.message : e}`);
+        this.serviceAccountLoginFailedUntil = Date.now() + 30_000;
+        return null;
+      } finally {
+        this.serviceAccountLoginInFlight = null;
+      }
+    })();
+
+    return this.serviceAccountLoginInFlight;
+  }
+
   /** Interroge le service prescription externe pour une paire serviceId/chuId donnée. */
   private async fetchExternalPrescriptionsFor(serviceId: string, chuId: string): Promise<ExternalEndoscopiePrescription[]> {
     try {
       const url = `${getPrescriptionExtApiUrl()}/endoscopie?serviceIdDest=${serviceId}&chuId=${chuId}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const token = await this.getServiceAccountToken();
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!res.ok) return [];
       const data = await res.json() as unknown;
       return Array.isArray(data) ? (data as ExternalEndoscopiePrescription[]) : [];
@@ -270,11 +349,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Récupère les prescriptions brutes d'endoscopie depuis le service externe (avant
-   * aplatissement des demandes multiples). Interroge à la fois ENDOSCOPIE_SERVICE_ID/
-   * ENDOSCOPIE_CHU_ID (marquage local) et ENDOSCOPIE_AUTH_SERVICE_ID/ENDOSCOPIE_AUTH_CHU_ID
-   * (marquage via l'écosystème d'authentification) — une même prescription "endoscopie"
-   * peut légitimement être taguée avec l'une ou l'autre paire selon sa source, et
-   * ignorer l'une des deux ferait disparaître de vraies prescriptions du fil.
+   * aplatissement des demandes multiples). Interroge TOUTES les combinaisons de nos ID
+   * service/CHU locaux et ceux de l'écosystème d'authentification — en pratique, le
+   * service prescription tague ses prescriptions avec des paires "mixtes" (ex. notre
+   * serviceId local avec le chuId de l'écosystème d'auth), pas seulement les deux paires
+   * "propres" — confirmé le 19/07/2026 : plusieurs prescriptions récentes utilisaient
+   * serviceIdDest=ENDOSCOPIE_SERVICE_ID avec chuId=ENDOSCOPIE_AUTH_CHU_ID et étaient donc
+   * invisibles avec l'ancienne logique à 2 paires fixes.
    */
   private async fetchExternalPrescriptionsRaw(serviceIdOverride?: string): Promise<ExternalEndoscopiePrescription[]> {
     const primaryServiceId = this.getEndoscopieServiceId(serviceIdOverride);
@@ -282,16 +363,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Le frontend rajoute systématiquement ?serviceId=<ENDOSCOPIE_SERVICE_ID> sur tous
     // ses appels (voir appendServiceId côté front) : serviceIdOverride vaut donc quasiment
     // toujours notre propre ID par défaut, pas un vrai appelant externe. On interroge
-    // systématiquement la paire auth-service en plus, indépendamment de cet override.
+    // systématiquement les ID auth-service/auth-chu en plus, indépendamment de cet override.
     const authServiceId = getEndoscopieAuthServiceId();
     const authChuId = getEndoscopieAuthChuId();
 
-    const queries = [this.fetchExternalPrescriptionsFor(primaryServiceId, primaryChuId)];
-    if (authServiceId && authChuId && (authServiceId !== primaryServiceId || authChuId !== primaryChuId)) {
-      queries.push(this.fetchExternalPrescriptionsFor(authServiceId, authChuId));
-    }
+    const serviceIds = [...new Set([primaryServiceId, authServiceId].filter((v): v is string => Boolean(v)))];
+    const chuIds = [...new Set([primaryChuId, authChuId].filter((v): v is string => Boolean(v)))];
+    const pairs = serviceIds.flatMap((s) => chuIds.map((c) => [s, c] as const));
 
-    const results = await Promise.all(queries);
+    const results = await Promise.all(pairs.map(([s, c]) => this.fetchExternalPrescriptionsFor(s, c)));
     const byId = new Map<string, ExternalEndoscopiePrescription>();
     for (const list of results) {
       for (const p of list) byId.set(p.id, p);
@@ -367,10 +447,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Mappe la priorité locale vers l'urgence externe. */
-  private mapPrioriteToUrgence(priorite?: string | null): 'NORMALE' | 'URGENTE' | 'STAT' {
-    if (priorite === 'STAT') return 'STAT';
-    if (priorite === 'Urgent') return 'URGENTE';
-    return 'NORMALE';
+  private mapPrioriteToUrgence(priorite?: string | null): 'NORMAL' | 'URGENT' | 'TRES_URGENT' {
+    if (priorite === 'STAT') return 'TRES_URGENT';
+    if (priorite === 'Urgent') return 'URGENT';
+    return 'NORMAL';
   }
 
   /** Mappe le statut externe (ex: "CREEE") vers le statut local ("A planifier"). */
@@ -448,19 +528,26 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Source de vérité : API externe
     const external = await this.fetchExternalPrescriptions(serviceIdOverride);
 
-    // État workflow local (seulement pour les prescriptions déjà dans le workflow)
-    const extIds = external.map((e) => e.id).filter(Boolean);
-    const localRecords = extIds.length
-      ? await this.prisma.prescription.findMany({
-          where: { externalId: { in: extIds }, serviceId },
-          include: { rendezVous: true, checklistApres: true, dossierCPA: true, resultatEndoscopie: true },
-        })
-      : [];
-    const localByExtId = new Map(localRecords.map((r) => [r.externalId!, r]));
+    // Repli local : si le service externe est en panne/indisponible (ex. 401 côté
+    // fournisseur), on ne doit pas faire disparaître tout le fil de prescription — on
+    // charge TOUTES nos prescriptions locales, et celles non retrouvées côté externe
+    // cette fois-ci restent affichées à partir de nos propres données (voir plus bas).
+    const allLocalRecords = await this.prisma.prescription.findMany({
+      where: { serviceId },
+      include: { rendezVous: true, checklistApres: true, dossierCPA: true, resultatEndoscopie: true },
+    });
+    const localByExtId = new Map(
+      allLocalRecords.filter((r) => r.externalId).map((r) => [r.externalId as string, r]),
+    );
 
     // Médecins prescripteurs — garantit un stub local pour chaque prescripteur externe inconnu,
     // puis résout le nom réel (ou le stub) pour l'affichage dans le fil de prescription.
-    const prescripteurIds = [...new Set(external.map((e) => e.prescripteurId).filter(Boolean))];
+    const prescripteurIds = [
+      ...new Set([
+        ...external.map((e) => e.prescripteurId).filter(Boolean),
+        ...allLocalRecords.map((r) => r.medecinId).filter(Boolean),
+      ]),
+    ];
     if (prescripteurIds.length) {
       const existingMedecins = await this.prisma.medecin.findMany({
         where: { id: { in: prescripteurIds } },
@@ -491,7 +578,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const allPatients = await this.getAccueilPatients();
     const patientMap = new Map(allPatients.map((p) => [p.id, this.toPatientView(p)]));
 
-    return external.map((ext) => {
+    const externalRows = external.map((ext) => {
       const local = localByExtId.get(ext.id);
       return {
         id: local?.id ?? ext.id,
@@ -514,6 +601,34 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         patient: ext.patientId ? (patientMap.get(ext.patientId) ?? null) : null,
       };
     });
+
+    // Prescriptions locales absentes de la réponse externe cette fois-ci (service
+    // externe en panne, ou prescription retirée côté externe) : affichées à partir de
+    // nos propres données plutôt que de disparaître silencieusement du fil.
+    const coveredExtIds = new Set(external.map((e) => e.id));
+    const localOnlyRows = allLocalRecords
+      .filter((r) => !r.externalId || !coveredExtIds.has(r.externalId))
+      .map((local) => ({
+        id: local.id,
+        externalId: local.externalId,
+        prescriptionExternalId: null,
+        patientId: local.patientId,
+        medecinId: local.medecinId || null,
+        typeExamen: local.typeExamen,
+        motif: local.motif || '',
+        priorite: local.priorite,
+        statut: local.statut,
+        dateDemande: local.dateDemande,
+        serviceId,
+        medecinPrescripteur: local.medecinId ? (medecinMap.get(local.medecinId) ?? null) : null,
+        rendezVous: local.rendezVous ?? null,
+        checklistApres: local.checklistApres ?? null,
+        dossierCPA: local.dossierCPA ?? null,
+        resultatEndoscopie: local.resultatEndoscopie ?? null,
+        patient: local.patientId ? (patientMap.get(local.patientId) ?? null) : null,
+      }));
+
+    return [...externalRows, ...localOnlyRows];
   }
 
   /**
@@ -925,9 +1040,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         serviceIdDest: serviceId,
         demandes: demandesAEnvoyer,
       };
+      const token = await this.getServiceAccountToken();
       const extRes = await fetch(`${getPrescriptionExtApiUrl()}/endoscopie`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(extBody),
         signal: AbortSignal.timeout(20000),
       });
@@ -977,9 +1096,18 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         include: { medecinPrescripteur: true },
       });
       const enriched = { ...prescription, patient: this.toPatientView(accueilPatient) };
-      await this.notificationService.notifyPrescriptionCreated(enriched);
       prescriptionsCreees.push(enriched);
+      // Marquer comme déjà vue pour que pollForNewPrescriptions() ne renotifie pas
+      // ces mêmes demandes au prochain cycle (on notifie nous-mêmes juste après).
+      this.seenExternalPrescriptionIds?.add(demande?.id ?? extResult.id);
     }
+    // Une seule notification pour tout le groupe (multi-examens compris),
+    // voir NotificationService.notifyPrescriptionCreated.
+    await this.notificationService.notifyPrescriptionCreated(
+      prescriptionsCreees as Parameters<
+        typeof this.notificationService.notifyPrescriptionCreated
+      >[0],
+    );
 
     // Rétrocompatible : un seul examen renvoie l'objet directement (comme avant),
     // plusieurs renvoient le tableau complet des prescriptions créées.
@@ -1000,6 +1128,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           ...(data.priorite !== undefined && { priorite: data.priorite }),
           ...(data.typeExamen !== undefined && { typeExamen: data.typeExamen }),
           ...(data.motif !== undefined && { motif: data.motif }),
+          ...(data.examensComplementaires !== undefined && {
+            examensComplementaires: data.examensComplementaires,
+          }),
         },
         include: {
           medecinPrescripteur: true,

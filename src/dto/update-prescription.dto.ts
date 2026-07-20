@@ -12,4 +12,9 @@ export class UpdatePrescriptionDto {
 
   @ApiPropertyOptional()
   motif?: string;
+
+  @ApiPropertyOptional({
+    description: "Examens complémentaires à prévoir avant l'endoscopie (texte libre, saisi depuis le dossier patient)",
+  })
+  examensComplementaires?: string;
 }

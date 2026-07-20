@@ -141,24 +141,46 @@ export class NotificationService {
     }
   }
 
-  async notifyPrescriptionCreated(prescription: {
-    id: string;
-    patientId: string;
-    typeExamen: string;
-    motif?: string | null;
-    patient?: { nom: string; prenom: string } | null;
-    medecinPrescripteur?: { nom: string; prenom: string } | null;
-  }): Promise<unknown | null> {
-    const patientName = prescription.patient
-      ? `${prescription.patient.prenom} ${prescription.patient.nom}`.trim()
+  /**
+   * Envoie UNE notification pour une prescription — ou pour un groupe de prescriptions
+   * issues d'une même prescription externe multi-examens (ex. Coloscopie + Fibroscopie
+   * pour le même patient) : dans ce cas, une seule notification/son couvrant tous les
+   * examens, pas une par examen (voir pollForNewPrescriptions).
+   */
+  async notifyPrescriptionCreated(
+    prescription:
+      | {
+          id: string;
+          patientId: string;
+          typeExamen: string;
+          motif?: string | null;
+          patient?: { nom: string; prenom: string } | null;
+          medecinPrescripteur?: { nom: string; prenom: string } | null;
+        }
+      | Array<{
+          id: string;
+          patientId: string;
+          typeExamen: string;
+          motif?: string | null;
+          patient?: { nom: string; prenom: string } | null;
+          medecinPrescripteur?: { nom: string; prenom: string } | null;
+        }>,
+  ): Promise<unknown | null> {
+    const list = Array.isArray(prescription) ? prescription : [prescription];
+    const primary = list[0];
+    if (!primary) return null;
+
+    const patientName = primary.patient
+      ? `${primary.patient.prenom} ${primary.patient.nom}`.trim()
       : 'Patient';
-    const medecinName = prescription.medecinPrescripteur
-      ? `Dr. ${prescription.medecinPrescripteur.prenom} ${prescription.medecinPrescripteur.nom}`.trim()
+    const medecinName = primary.medecinPrescripteur
+      ? `Dr. ${primary.medecinPrescripteur.prenom} ${primary.medecinPrescripteur.nom}`.trim()
       : 'Médecin';
+    const typeExamenLabel = list.map((p) => p.typeExamen).join(' + ');
 
     return this.createNotification({
       type: 'DEMANDE_EXAMEN',
-      motif: `Nouvelle prescription endoscopie — ${prescription.typeExamen}`,
+      motif: `Nouvelle prescription endoscopie — ${typeExamenLabel}`,
       urgence: 3,
       emitter: getEndoscopieServiceId(),
       emitterName: 'Unité Endoscopie',
@@ -166,17 +188,17 @@ export class NotificationService {
       recipientName: 'Planification examens',
       departmentSource: 'Endoscopie',
       departmentTarget: 'Planification',
-      patientId: prescription.patientId,
+      patientId: primary.patientId,
       entiteRefType: 'Prescription',
-      entiteRefId: prescription.id,
+      entiteRefId: primary.id,
       channels: ['INTERNAL', 'SOUND'],
       payload: {
         sourceServiceId: getEndoscopieServiceId(),
         sourceServiceName: 'Unité Endoscopie',
         patientName,
         medecinName,
-        motif: prescription.motif ?? '',
-        typeExamen: prescription.typeExamen,
+        motif: primary.motif ?? '',
+        typeExamen: typeExamenLabel,
       },
     });
   }
