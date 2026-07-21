@@ -518,10 +518,18 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     return this.flattenExternalPrescriptions(raw);
   }
 
-  /** Mappe l'urgence externe vers la priorité locale. */
+  /**
+   * Mappe l'urgence externe vers la priorité locale. Le service prescription a changé
+   * son enum d'urgence (NORMAL/URGENT/TRES_URGENT, confirmé sur le endpoint de création
+   * — voir mapPrioriteToUrgence) sans que cette lecture ne soit mise à jour en miroir :
+   * les prescriptions récentes tombaient donc toutes silencieusement en "Standard",
+   * quelle que soit l'urgence réelle fixée par le prescripteur source. Les anciennes
+   * valeurs (STAT/URGENTE) restent vérifiées pour ne pas casser l'historique déjà migré.
+   */
   private mapUrgenceToPriorite(urgence?: string | null): string {
-    if (urgence === 'STAT') return 'STAT';
-    if (urgence === 'URGENTE') return 'Urgent';
+    const u = urgence?.trim().toUpperCase();
+    if (u === 'STAT' || u === 'TRES_URGENT') return 'STAT';
+    if (u === 'URGENTE' || u === 'URGENT') return 'Urgent';
     return 'Standard';
   }
 
