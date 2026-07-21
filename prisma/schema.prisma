@@ -36,6 +36,12 @@ model Prescription {
   id                  String               @id @default(uuid())
   // Lien vers la prescription dans le service externe (source de vérité)
   externalId          String?              @unique
+  // ID de la prescription externe "parente" (regroupement multi-examens) — capturé au
+  // moment où l'examen est encore présent dans le flux externe en direct, car ce dernier
+  // ne renvoie qu'un sous-ensemble récent/actif des demandes : sans ce cache local, un
+  // examen qui en sort (terminé, ou simplement plus dans la fenêtre retournée) perdait
+  // son rattachement au groupe et réapparaissait comme une ligne séparée dans le Fil.
+  prescriptionExternalId String?
   serviceId           String
   patientId           String
   medecinId           String               @default("")

@@ -666,13 +666,24 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const allPatients = await this.getAccueilPatients();
     const patientMap = new Map(allPatients.map((p) => [p.id, this.toPatientView(p)]));
 
+    // Le flux externe ne renvoie qu'un sous-ensemble récent/actif des demandes : un examen
+    // qui en sort (terminé, ou simplement plus dans la fenêtre retournée) doit conserver son
+    // rattachement au groupe multi-examens. On met donc en cache le prescriptionExternalId en
+    // local dès qu'on le voit passer en direct, pour pouvoir le réutiliser plus tard (voir
+    // localOnlyRows ci-dessous) — sans quoi l'examen réapparaîtrait comme une ligne séparée.
+    const prescriptionExternalIdUpdates: { id: string; prescriptionExternalId: string | null }[] = [];
+
     const externalRows = external.map((ext) => {
       const local = localByExtId.get(ext.id);
+      const livePrescriptionExternalId = ext.prescriptionExternalId ?? null;
+      if (local && livePrescriptionExternalId && local.prescriptionExternalId !== livePrescriptionExternalId) {
+        prescriptionExternalIdUpdates.push({ id: local.id, prescriptionExternalId: livePrescriptionExternalId });
+      }
       return {
         id: local?.id ?? ext.id,
         externalId: ext.id,
         // Regroupe les demandes issues d'une même prescription multi-examens externe.
-        prescriptionExternalId: ext.prescriptionExternalId ?? null,
+        prescriptionExternalId: livePrescriptionExternalId,
         patientId: ext.patientId,
         medecinId: ext.prescripteurId ?? null,
         typeExamen: ext.typeExamen || 'Endoscopie',
@@ -690,16 +701,30 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       };
     });
 
+    if (prescriptionExternalIdUpdates.length) {
+      // Best-effort, ne bloque jamais la réponse — une écriture manquée sera retentée
+      // au prochain passage où l'examen est encore visible côté externe.
+      Promise.all(
+        prescriptionExternalIdUpdates.map((u) =>
+          this.prisma.prescription
+            .update({ where: { id: u.id }, data: { prescriptionExternalId: u.prescriptionExternalId } })
+            .catch(() => undefined),
+        ),
+      ).catch(() => undefined);
+    }
+
     // Prescriptions locales absentes de la réponse externe cette fois-ci (service
     // externe en panne, ou prescription retirée côté externe) : affichées à partir de
-    // nos propres données plutôt que de disparaître silencieusement du fil.
+    // nos propres données plutôt que de disparaître silencieusement du fil. On réutilise
+    // le prescriptionExternalId mis en cache localement (voir plus haut) pour ne pas
+    // perdre son rattachement au groupe multi-examens.
     const coveredExtIds = new Set(external.map((e) => e.id));
     const localOnlyRows = allLocalRecords
       .filter((r) => !r.externalId || !coveredExtIds.has(r.externalId))
       .map((local) => ({
         id: local.id,
         externalId: local.externalId,
-        prescriptionExternalId: null,
+        prescriptionExternalId: local.prescriptionExternalId ?? null,
         patientId: local.patientId,
         medecinId: local.medecinId || null,
         typeExamen: local.typeExamen,
@@ -788,10 +813,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       include,
     });
 
-    // prescriptionExternalId (regroupement multi-examens) n'est pas stocké en local —
-    // recherché côté service externe pour permettre au dossier patient d'afficher tous
-    // les examens d'une même prescription multi-examens (voir PatientDossierContent).
-    let prescriptionExternalId: string | null = null;
+    // prescriptionExternalId (regroupement multi-examens) est mis en cache en local dès
+    // qu'on le voit en direct côté externe — celui-ci ne renvoyant qu'un sous-ensemble
+    // récent/actif des demandes, on retombe sur la valeur mise en cache si l'examen n'y
+    // est plus, pour ne pas perdre son rattachement au groupe (voir PatientDossierContent).
+    let prescriptionExternalId: string | null = prescription?.prescriptionExternalId ?? null;
 
     if (!prescription) {
       // Pas encore en local — récupère depuis l'API externe et crée à la demande
@@ -811,6 +837,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       prescription = await this.prisma.prescription.create({
         data: {
           externalId: ext.id,
+          prescriptionExternalId,
           serviceId,
           patientId: ext.patientId,
           medecinId: ext.prescripteurId ?? '',
@@ -825,18 +852,24 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     } else if (prescription.externalId) {
       const external = await this.fetchExternalPrescriptions(serviceIdOverride);
       const ext = external.find((e) => e.id === prescription!.externalId);
-      prescriptionExternalId = ext?.prescriptionExternalId ?? null;
 
-      // La priorité locale n'est écrite qu'à la création — si le mapping d'urgence a
-      // changé depuis (ex. ancien enum externe) ou si l'urgence source a été corrigée,
-      // ce dossier resterait figé sur une valeur périmée alors que le Fil de prescription,
-      // lui, recalcule toujours depuis l'urgence externe en direct. On aligne les deux.
+      // La priorité et le prescriptionExternalId ne sont écrits qu'à la création — si le
+      // mapping d'urgence a changé depuis (ex. ancien enum externe) ou si l'urgence source
+      // a été corrigée, ce dossier resterait figé sur une valeur périmée alors que le Fil
+      // de prescription, lui, recalcule toujours depuis l'externe en direct. On aligne les
+      // deux tant que l'examen est encore visible côté externe.
       if (ext) {
+        prescriptionExternalId = ext.prescriptionExternalId ?? null;
         const livePriorite = this.mapUrgenceToPriorite(ext.urgence);
-        if (livePriorite !== prescription.priorite) {
+        const data: { priorite?: string; prescriptionExternalId?: string | null } = {};
+        if (livePriorite !== prescription.priorite) data.priorite = livePriorite;
+        if (prescriptionExternalId && prescriptionExternalId !== prescription.prescriptionExternalId) {
+          data.prescriptionExternalId = prescriptionExternalId;
+        }
+        if (Object.keys(data).length) {
           prescription = await this.prisma.prescription.update({
             where: { id: prescription.id },
-            data: { priorite: livePriorite },
+            data,
             include,
           });
         }
