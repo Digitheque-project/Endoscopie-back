@@ -17,17 +17,20 @@ services:
       # Même URL Supabase, connexion directe port 5432 sans pgbouncer
       - key: DIRECT_URL
         sync: false
+      # Identité Endoscopie — valeur de secours uniquement : résolue automatiquement au
+      # démarrage depuis SERVICE_REGISTRY_API_URL (voir plus bas), pas besoin de la
+      # tenir à jour manuellement.
       - key: ENDOSCOPIE_SERVICE_ID
-        value: 130ba793-3726-4f17-8790-db2f8c2d8783
+        value: ab97eaaa-9239-4f37-b5d7-d652c4231cc7
       - key: ENDOSCOPIE_CHU_ID
         value: 72d49761-2a65-446d-b025-15a74cac1ad4
-      # ID service/CHU Endoscopie enregistrés dans le service d'authentification central —
-      # certaines prescriptions externes multi-services sont taguées avec ceux-ci plutôt
-      # qu'avec ENDOSCOPIE_SERVICE_ID/ENDOSCOPIE_CHU_ID ci-dessus.
+      # Alias historique (même valeur qu'ENDOSCOPIE_SERVICE_ID ci-dessus)
       - key: ENDOSCOPIE_AUTH_SERVICE_ID
         value: ab97eaaa-9239-4f37-b5d7-d652c4231cc7
       - key: ENDOSCOPIE_AUTH_CHU_ID
         value: 1e5bbbb7-fa10-4d59-8848-2d0ce96a9394
+      - key: SERVICE_REGISTRY_API_URL
+        value: https://service-service-votd.onrender.com
       - key: CHU_API_URL
         value: https://service-chu-back-production-d6a8.up.railway.app
       - key: ACCUEIL_API_URL

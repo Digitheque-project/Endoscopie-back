@@ -131,6 +131,17 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit() {
+    // Résout dynamiquement notre identité (serviceId/chuId) depuis le registre central,
+    // pour ne jamais dépendre d'un ID figé en dur qu'il faudrait reconfigurer à chaque
+    // nouveau déploiement (ex. sur le serveur définitif de l'hôpital) — voir
+    // resolveAndRefreshAuthIdentity(). Les variables d'env restent utilisées si le
+    // registre est injoignable (secours).
+    await this.resolveAndRefreshAuthIdentity();
+    this.identityRefreshInterval = setInterval(
+      () => this.resolveAndRefreshAuthIdentity(),
+      this.IDENTITY_REFRESH_INTERVAL_MS,
+    );
+
     // Amorce la liste des demandes déjà connues au démarrage, pour ne notifier
     // que les VRAIES nouvelles arrivées et éviter une salve de notifications
     // pour tout ce qui existait déjà avant le lancement du serveur.
@@ -150,6 +161,62 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     if (this.prescriptionWatcherInterval) clearInterval(this.prescriptionWatcherInterval);
+    if (this.identityRefreshInterval) clearInterval(this.identityRefreshInterval);
+  }
+
+  private identityRefreshInterval: ReturnType<typeof setInterval> | null = null;
+  private readonly IDENTITY_REFRESH_INTERVAL_MS = 60 * 60_000;
+
+  /**
+   * Interroge le registre central des services (SERVICE_REGISTRY_API_URL) pour trouver
+   * l'entrée nommée "Endoscopie" et écrase ENDOSCOPIE_SERVICE_ID/ENDOSCOPIE_AUTH_SERVICE_ID
+   * (même valeur depuis la migration du 21/07/2026 unifiant les anciens ID legacy — voir
+   * schema.prisma) et ENDOSCOPIE_AUTH_CHU_ID en mémoire avec les vraies valeurs actuelles.
+   * Ces variables d'env deviennent de simples valeurs de secours (utilisées si le registre
+   * est injoignable), plus une source de vérité à reconfigurer manuellement à chaque
+   * déploiement. ENDOSCOPIE_CHU_ID n'est volontairement pas touché ici : il sert aux appels
+   * vers l'écosystème CHU_API_URL/ACCUEIL_API_URL (registre Railway distinct, non vérifié
+   * compatible avec ce registre-ci).
+   */
+  private async resolveAndRefreshAuthIdentity(): Promise<void> {
+    const registryUrl = process.env.SERVICE_REGISTRY_API_URL?.trim().replace(/\/$/, '');
+    if (!registryUrl) return;
+
+    try {
+      const token = await this.getServiceAccountToken();
+      if (!token) return;
+
+      const res = await fetch(`${registryUrl}/services`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        this.logger.warn(`Résolution de l'identité Endoscopie échouée (${res.status}) — valeurs de secours conservées.`);
+        return;
+      }
+
+      const services = (await res.json()) as Array<{ id?: string; name?: string; chuId?: string }>;
+      const match = services.find((s) => s.name?.trim().toLowerCase() === 'endoscopie');
+      if (!match?.id) {
+        this.logger.warn('Aucun service "Endoscopie" trouvé dans le registre central — valeurs de secours conservées.');
+        return;
+      }
+
+      const changed =
+        process.env.ENDOSCOPIE_SERVICE_ID !== match.id ||
+        process.env.ENDOSCOPIE_AUTH_SERVICE_ID !== match.id ||
+        (match.chuId && process.env.ENDOSCOPIE_AUTH_CHU_ID !== match.chuId);
+
+      process.env.ENDOSCOPIE_SERVICE_ID = match.id;
+      process.env.ENDOSCOPIE_AUTH_SERVICE_ID = match.id;
+      if (match.chuId) process.env.ENDOSCOPIE_AUTH_CHU_ID = match.chuId;
+
+      if (changed) {
+        this.logger.log(`Identité Endoscopie résolue depuis le registre central : serviceId=${match.id} chuId=${match.chuId ?? '?'}`);
+      }
+    } catch (e) {
+      this.logger.warn(`Résolution de l'identité Endoscopie échouée : ${e instanceof Error ? e.message : e} — valeurs de secours conservées.`);
+    }
   }
 
   /**
