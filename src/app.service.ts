@@ -28,6 +28,7 @@ import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
+import { CreateNoteDossierDto } from './dto/create-note-dossier.dto';
 import { NotificationService } from './notification/notification.service';
 import {
   getNotificationApiUrl,
@@ -2124,6 +2125,29 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         serviceId,
         prescriptionId: data.prescriptionId,
         patientId: data.patientId,
+      },
+    });
+  }
+
+  /** Notes/observations libres horodatées ajoutées manuellement au dossier patient. */
+  async getNotesDossier(prescriptionId: string, serviceIdOverride?: string) {
+    return this.prisma.noteDossier.findMany({
+      where: { prescriptionId, ...this.scope(serviceIdOverride) },
+      orderBy: { dateCreation: 'desc' },
+    });
+  }
+
+  async createNoteDossier(data: CreateNoteDossierDto) {
+    if (!data.prescriptionId || !data.contenu?.trim()) {
+      throw new Error('prescriptionId et contenu sont obligatoires pour ajouter une note');
+    }
+    const serviceId = this.getEndoscopieServiceId(data.serviceId);
+    return this.prisma.noteDossier.create({
+      data: {
+        prescriptionId: data.prescriptionId,
+        serviceId,
+        auteur: data.auteur?.trim() || 'Inconnu',
+        contenu: data.contenu.trim(),
       },
     });
   }

@@ -30,6 +30,7 @@ import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { SaveConfirmationPlanificationDto } from './dto/save-confirmation-planification.dto';
 import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
+import { CreateNoteDossierDto } from './dto/create-note-dossier.dto';
 
 @Controller()
 export class AppController {
@@ -456,6 +457,27 @@ export class AppController {
   @ApiBody({ type: SaveChecklistAvantDto })
   async saveChecklistAvant(@Body() data: SaveChecklistAvantDto) {
     return this.appService.saveChecklistAvant(data);
+  }
+
+  // ——— Notes du dossier patient ———
+  @Get('api/notes-dossier/:prescriptionId')
+  @ApiTags('Notes')
+  @ApiOperation({ summary: 'Récupérer les notes libres du dossier patient' })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getNotesDossier(
+    @Param('prescriptionId') prescriptionId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getNotesDossier(prescriptionId, serviceId);
+  }
+
+  @Post('api/notes-dossier')
+  @ApiTags('Notes')
+  @ApiOperation({ summary: 'Ajouter une note libre au dossier patient', operationId: 'createNoteDossier' })
+  @ApiBody({ type: CreateNoteDossierDto })
+  async createNoteDossier(@Body() data: CreateNoteDossierDto) {
+    return this.appService.createNoteDossier(data);
   }
 
   // ——— Operations ———

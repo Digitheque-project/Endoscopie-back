@@ -52,9 +52,26 @@ model Prescription {
   resultatEndoscopie  ResultatEndoscopie?
   rendezVous          RendezVous?
   medecinPrescripteur Medecin?             @relation(fields: [medecinId], references: [id])
+  notes               NoteDossier[]
 
   @@index([serviceId])
   @@index([patientId])
+}
+
+// Note libre horodatée ajoutée manuellement au dossier patient (distincte des
+// champs structurés comme les checklists ou le compte rendu) — un patient peut
+// en accumuler plusieurs au fil du parcours, d'où la relation 1-N.
+model NoteDossier {
+  id             String       @id @default(uuid())
+  prescriptionId String
+  serviceId      String
+  auteur         String
+  contenu        String
+  dateCreation   DateTime     @default(now())
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id])
+
+  @@index([prescriptionId])
+  @@index([serviceId])
 }
 
 model EndoscopyExamType {
