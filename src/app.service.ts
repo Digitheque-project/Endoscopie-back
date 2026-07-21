@@ -825,6 +825,21 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       const external = await this.fetchExternalPrescriptions(serviceIdOverride);
       const ext = external.find((e) => e.id === prescription!.externalId);
       prescriptionExternalId = ext?.prescriptionExternalId ?? null;
+
+      // La priorité locale n'est écrite qu'à la création — si le mapping d'urgence a
+      // changé depuis (ex. ancien enum externe) ou si l'urgence source a été corrigée,
+      // ce dossier resterait figé sur une valeur périmée alors que le Fil de prescription,
+      // lui, recalcule toujours depuis l'urgence externe en direct. On aligne les deux.
+      if (ext) {
+        const livePriorite = this.mapUrgenceToPriorite(ext.urgence);
+        if (livePriorite !== prescription.priorite) {
+          prescription = await this.prisma.prescription.update({
+            where: { id: prescription.id },
+            data: { priorite: livePriorite },
+            include,
+          });
+        }
+      }
     }
 
     return { ...(await this.attachPatient(prescription)), prescriptionExternalId };
