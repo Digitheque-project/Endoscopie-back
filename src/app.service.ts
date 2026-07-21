@@ -700,11 +700,17 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       include,
     });
 
+    // prescriptionExternalId (regroupement multi-examens) n'est pas stocké en local —
+    // recherché côté service externe pour permettre au dossier patient d'afficher tous
+    // les examens d'une même prescription multi-examens (voir PatientDossierContent).
+    let prescriptionExternalId: string | null = null;
+
     if (!prescription) {
       // Pas encore en local — récupère depuis l'API externe et crée à la demande
       const external = await this.fetchExternalPrescriptions(serviceIdOverride);
       const ext = external.find((e) => e.id === id);
       if (!ext) throw new NotFoundException(`Prescription ${id} introuvable`);
+      prescriptionExternalId = ext.prescriptionExternalId ?? null;
 
       if (ext.prescripteurId) {
         await this.prisma.medecin.upsert({
@@ -728,9 +734,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         },
         include,
       });
+    } else if (prescription.externalId) {
+      const external = await this.fetchExternalPrescriptions(serviceIdOverride);
+      const ext = external.find((e) => e.id === prescription!.externalId);
+      prescriptionExternalId = ext?.prescriptionExternalId ?? null;
     }
 
-    return this.attachPatient(prescription);
+    return { ...(await this.attachPatient(prescription)), prescriptionExternalId };
   }
 
   /**
