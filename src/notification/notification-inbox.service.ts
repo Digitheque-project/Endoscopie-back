@@ -2,7 +2,6 @@ import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { MessageEvent } from '@nestjs/common';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
-import { getEndoscopieServiceId } from '../config/endoscopie-service';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
 import { InboxNotification } from './notification-inbox.types';
@@ -47,7 +46,7 @@ export class NotificationInboxService {
     const raw = dto as unknown as Record<string, unknown>;
     const isBlocNotif = BLOC_NOTIFICATION_TYPES.has(dto.type);
 
-    if (!isBlocNotif && !notificationMatchesServiceId(raw, getEndoscopieServiceId())) {
+    if (!isBlocNotif && !notificationMatchesServiceId(raw)) {
       this.logger.debug(
         `Notification ignorée (hors service Endoscopie): ${dto.type} ${dto.motif}`,
       );

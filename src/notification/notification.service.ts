@@ -113,7 +113,7 @@ export class NotificationService {
       const mergedPayload = {
         ...(fallback.payload ?? {}),
         ...((remote.data as Record<string, unknown>) ?? {}),
-        sourceServiceId: getEndoscopieServiceId(),
+        sourceServiceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
         sourceServiceName: 'Unité Endoscopie',
       };
       this.inbox.receive(
@@ -182,7 +182,7 @@ export class NotificationService {
       type: 'DEMANDE_EXAMEN',
       motif: `Nouvelle prescription endoscopie — ${typeExamenLabel}`,
       urgence: 3,
-      emitter: getEndoscopieServiceId(),
+      emitter: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
       emitterName: 'Unité Endoscopie',
       recipient: 'endoscopie-planification',
       recipientName: 'Planification examens',
@@ -193,7 +193,7 @@ export class NotificationService {
       entiteRefId: primary.id,
       channels: ['INTERNAL', 'SOUND'],
       payload: {
-        sourceServiceId: getEndoscopieServiceId(),
+        sourceServiceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
         sourceServiceName: 'Unité Endoscopie',
         patientName,
         medecinName,

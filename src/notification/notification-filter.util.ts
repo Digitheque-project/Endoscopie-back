@@ -1,4 +1,4 @@
-import { getEndoscopieServiceId } from '../config/endoscopie-service';
+import { getEndoscopieAuthServiceId, getEndoscopieServiceId } from '../config/endoscopie-service';
 
 /** Champs connus du service notification contenant un serviceId. */
 function collectServiceIdCandidates(raw: Record<string, unknown>): string[] {
@@ -23,20 +23,29 @@ function collectServiceIdCandidates(raw: Record<string, unknown>): string[] {
     .map((v) => v.toLowerCase());
 }
 
-/** Vérifie si une notification du service Render concerne l'unité Endoscopie. */
+/**
+ * Vérifie si une notification du service Render concerne l'unité Endoscopie.
+ * Le serviceId "officiel" (enregistré dans le service-registry central) est celui
+ * d'ENDOSCOPIE_AUTH_SERVICE_ID — ENDOSCOPIE_SERVICE_ID (registre CHU/Railway distinct)
+ * n'y est pas connu. On vérifie les deux pour ne rien manquer.
+ */
 export function notificationMatchesServiceId(
   raw: Record<string, unknown>,
-  serviceId = getEndoscopieServiceId(),
+  serviceIds: string[] = [getEndoscopieAuthServiceId(), getEndoscopieServiceId()].filter(
+    (v): v is string => Boolean(v),
+  ),
 ): boolean {
-  const target = serviceId.trim().toLowerCase();
-  if (!target) return false;
+  const targets = [...new Set(serviceIds.map((s) => s.trim().toLowerCase()).filter(Boolean))];
+  if (!targets.length) return false;
 
-  if (collectServiceIdCandidates(raw).some((v) => v === target)) {
+  const candidates = collectServiceIdCandidates(raw);
+  if (candidates.some((v) => targets.includes(v))) {
     return true;
   }
 
   try {
-    return JSON.stringify(raw).toLowerCase().includes(target);
+    const rawStr = JSON.stringify(raw).toLowerCase();
+    return targets.some((t) => rawStr.includes(t));
   } catch {
     return false;
   }
