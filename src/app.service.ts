@@ -116,10 +116,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private accueilCache: { patients: AccueilPatientRaw[]; expiresAt: number } | null = null;
 
   /** IDs de demandes externes déjà vus — permet de détecter l'arrivée d'une nouvelle
-   *  prescription (venant d'un autre service) sans dépendre du polling du frontend. */
+   *  prescription (venant d'un autre service) sans dépendre du polling du frontend.
+   *  Le service prescription externe n'expose aucun webhook/callback pour nous notifier
+   *  lui-même à l'arrivée d'une nouvelle demande (vérifié sur son Swagger) — le polling
+   *  reste donc le seul moyen de détecter une nouvelle prescription, avec un intervalle
+   *  court pour rester au plus près de l'instantané. */
   private seenExternalPrescriptionIds: Set<string> | null = null;
   private prescriptionWatcherInterval: ReturnType<typeof setInterval> | null = null;
-  private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 20000;
+  private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 3000;
 
   /** JWT du compte de service, mis en cache — certains services externes (ex. prescription)
    *  exigent le même token que celui utilisé par nos utilisateurs pour se connecter. */
@@ -225,8 +229,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
    * associé côté front — sans ça, seules les prescriptions créées via notre propre
    * POST /api/prescriptions déclenchaient une notification.
    */
+  private isPollingPrescriptions = false;
+
   private async pollForNewPrescriptions() {
     if (!this.seenExternalPrescriptionIds) return;
+    // Empêche deux cycles de se chevaucher si un appel externe traîne plus longtemps
+    // que l'intervalle (désormais court, voir PRESCRIPTION_WATCH_INTERVAL_MS).
+    if (this.isPollingPrescriptions) return;
+    this.isPollingPrescriptions = true;
     try {
       const current = await this.fetchExternalPrescriptions();
       const nouvelles = current.filter((p) => p.id && !this.seenExternalPrescriptionIds!.has(p.id));
@@ -259,6 +269,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       }
     } catch (e) {
       this.logger.warn(`Vérification des nouvelles prescriptions échouée: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      this.isPollingPrescriptions = false;
     }
   }
 
