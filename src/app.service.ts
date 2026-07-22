@@ -29,6 +29,7 @@ import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
 import { CreateNoteDossierDto } from './dto/create-note-dossier.dto';
+import { parseDateTimeAsUtc } from './utils/datetime.util';
 import { NotificationService } from './notification/notification.service';
 import {
   getNotificationApiUrl,
@@ -952,7 +953,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
     const dateFilter: { gte?: Date; lte?: Date } = {};
     if (filters.dateFrom) dateFilter.gte = new Date(filters.dateFrom);
-    if (filters.dateTo) dateFilter.lte = new Date(`${filters.dateTo}T23:59:59.999`);
+    if (filters.dateTo) dateFilter.lte = parseDateTimeAsUtc(`${filters.dateTo}T23:59:59.999`);
 
     const prescriptions = await this.prisma.prescription.findMany({
       where: {
@@ -1572,7 +1573,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           }),
           ...(data.statut !== undefined && { statut: data.statut }),
           ...(data.dateValidation !== undefined && {
-            dateValidation: new Date(data.dateValidation),
+            dateValidation: parseDateTimeAsUtc(data.dateValidation),
           }),
         },
         include: {
@@ -1830,12 +1831,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     if (!data.dateHeureDebut) {
       throw new BadRequestException('dateHeureDebut est obligatoire');
     }
-    const dateHeureDebut = new Date(data.dateHeureDebut);
+    const dateHeureDebut = parseDateTimeAsUtc(data.dateHeureDebut);
     if (Number.isNaN(dateHeureDebut.getTime())) {
       throw new BadRequestException('dateHeureDebut est invalide');
     }
     if (data.dateHeureFin) {
-      const explicitEnd = new Date(data.dateHeureFin);
+      const explicitEnd = parseDateTimeAsUtc(data.dateHeureFin);
       if (Number.isNaN(explicitEnd.getTime())) {
         throw new BadRequestException('dateHeureFin est invalide');
       }
@@ -1853,7 +1854,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Toujours stocker une heure de fin concrète (45 min par défaut) pour que
     // les futures vérifications de collision restent fiables.
     const dateHeureFin = data.dateHeureFin
-      ? new Date(data.dateHeureFin)
+      ? parseDateTimeAsUtc(data.dateHeureFin)
       : new Date(dateHeureDebut.getTime() + 45 * 60000);
 
     let salle: { id: string; nom: string; capacite: number; estActive: boolean } | null = null;
@@ -1999,13 +2000,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
     if (reschedule) {
       if (data.dateHeureDebut !== undefined) {
-        newDebut = new Date(data.dateHeureDebut);
+        newDebut = parseDateTimeAsUtc(data.dateHeureDebut);
         if (Number.isNaN(newDebut.getTime())) {
           throw new BadRequestException('dateHeureDebut est invalide');
         }
       }
       if (data.dateHeureFin !== undefined) {
-        newFin = data.dateHeureFin ? new Date(data.dateHeureFin) : null;
+        newFin = data.dateHeureFin ? parseDateTimeAsUtc(data.dateHeureFin) : null;
         if (newFin && Number.isNaN(newFin.getTime())) {
           throw new BadRequestException('dateHeureFin est invalide');
         }
@@ -2419,7 +2420,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         motif: detailsPrescription.indicationClinique,
         priorite: detailsPrescription.degreeUrgence,
         statut: detailsPrescription.statut,
-        dateDemande: new Date(detailsPrescription.datePrescription),
+        dateDemande: parseDateTimeAsUtc(detailsPrescription.datePrescription),
         serviceId,
       },
       update: {
@@ -2432,7 +2433,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
     // Créer/Mettre à jour le rendez-vous
     const rendezVous = data.rendezVous;
-    const dateHeureDebut = new Date(`${rendezVous.date}T${rendezVous.heure}`);
+    const dateHeureDebut = parseDateTimeAsUtc(`${rendezVous.date}T${rendezVous.heure}`);
 
     const rdv = await this.prisma.rendezVous.upsert({
       where: {

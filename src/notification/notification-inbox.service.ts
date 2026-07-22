@@ -6,6 +6,7 @@ import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
 import { InboxNotification } from './notification-inbox.types';
 import { PrismaService } from '../prisma/prisma.service';
+import { parseDateTimeAsUtc } from '../utils/datetime.util';
 
 /** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
 const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
@@ -107,7 +108,7 @@ export class NotificationInboxService {
         where: { id: dossierId },
         data: {
           ...(decision && { decisionCpa: decision, statut: statutMap[decision] ?? dossier.statut }),
-          ...(dateCpaRaw && { dateCpa: new Date(dateCpaRaw) }),
+          ...(dateCpaRaw && { dateCpa: parseDateTimeAsUtc(dateCpaRaw) }),
           ...(observations && { observations }),
         },
       });
@@ -133,8 +134,8 @@ export class NotificationInboxService {
         where: { id: dossierId },
         data: {
           statut: 'VPA Réalisée',
-          ...(dateVpaRaw && { dateVpa: new Date(dateVpaRaw) }),
-          dateValidation: dateVpaRaw ? new Date(dateVpaRaw) : new Date(),
+          ...(dateVpaRaw && { dateVpa: parseDateTimeAsUtc(dateVpaRaw) }),
+          dateValidation: dateVpaRaw ? parseDateTimeAsUtc(dateVpaRaw) : new Date(),
         },
       });
       this.logger.log(`VPA_REALISEE appliqué au dossier ${dossierId}`);
