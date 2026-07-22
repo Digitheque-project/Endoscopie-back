@@ -1999,6 +1999,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     let newFin = existing.dateHeureFin;
 
     if (reschedule) {
+      // Durée d'origine du rendez-vous — utilisée pour recalculer l'heure de fin
+      // quand seule la date de début change (ex. décalage vers un tout autre jour) :
+      // sans ça, l'ancienne heure de fin absolue reste et tombe souvent avant la
+      // nouvelle heure de début, faisant échouer la replanification.
+      const originalDurationMs = existing.dateHeureFin
+        ? existing.dateHeureFin.getTime() - existing.dateHeureDebut.getTime()
+        : 45 * 60000;
+
       if (data.dateHeureDebut !== undefined) {
         newDebut = parseDateTimeAsUtc(data.dateHeureDebut);
         if (Number.isNaN(newDebut.getTime())) {
@@ -2010,6 +2018,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         if (newFin && Number.isNaN(newFin.getTime())) {
           throw new BadRequestException('dateHeureFin est invalide');
         }
+      } else if (data.dateHeureDebut !== undefined) {
+        newFin = new Date(newDebut.getTime() + originalDurationMs);
       }
       if (!newFin) {
         newFin = new Date(newDebut.getTime() + 45 * 60000);
@@ -2082,7 +2092,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           typeExamenSecondaire: data.typeExamenSecondaire,
         }),
         ...(data.dateHeureDebut !== undefined && { dateHeureDebut: newDebut }),
-        ...(data.dateHeureFin !== undefined && { dateHeureFin: newFin }),
+        // `newFin` est recalculée dès que `dateHeureDebut` change (même si le client
+        // n'envoie pas explicitement dateHeureFin, voir plus haut) — il faut donc la
+        // persister dans les deux cas, pas seulement quand le client l'a fournie.
+        ...(reschedule && { dateHeureFin: newFin }),
       },
       include: {
         medecin: true,
