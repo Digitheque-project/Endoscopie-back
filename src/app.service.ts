@@ -1856,8 +1856,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       ? new Date(data.dateHeureFin)
       : new Date(dateHeureDebut.getTime() + 45 * 60000);
 
+    let salle: { id: string; nom: string; capacite: number; estActive: boolean } | null = null;
     if (data.salleId) {
-      const salle = await this.prisma.salle.findUnique({ where: { id: data.salleId } });
+      salle = await this.prisma.salle.findUnique({ where: { id: data.salleId } });
       if (!salle) {
         throw new BadRequestException(`Salle ${data.salleId} introuvable`);
       }
@@ -1909,13 +1910,18 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     });
 
     try {
-      if (data.salleId) {
-        const existingConflict = await this.prisma.rendezVous.findFirst({
+      if (data.salleId && salle) {
+        // La salle peut accueillir plusieurs patients en simultané selon sa capacité
+        // (ex: capacité 5 = jusqu'à 5 patients différents sur le même créneau) —
+        // on ne bloque que lorsque le nombre de rendez-vous déjà présents sur ce
+        // créneau atteint cette limite, pas dès le premier chevauchement.
+        const capacite = salle.capacite > 0 ? salle.capacite : 1;
+        const concurrentCount = await this.prisma.rendezVous.count({
           where: overlapWhere({ salleId: data.salleId }),
         });
-        if (existingConflict) {
+        if (concurrentCount >= capacite) {
           throw new BadRequestException(
-            `Ce créneau est déjà réservé. Veuillez choisir une autre date ou un autre horaire.`,
+            `La salle "${salle.nom}" a atteint sa capacité maximale (${capacite} patient${capacite > 1 ? 's' : ''}) sur ce créneau. Veuillez choisir une autre date, un autre horaire, ou une autre salle.`,
           );
         }
       }
@@ -2028,12 +2034,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       });
 
       if (existing.salleId) {
-        const conflict = await this.prisma.rendezVous.findFirst({
+        const salle = await this.prisma.salle.findUnique({ where: { id: existing.salleId } });
+        const capacite = salle && salle.capacite > 0 ? salle.capacite : 1;
+        const concurrentCount = await this.prisma.rendezVous.count({
           where: overlapWhere({ salleId: existing.salleId }),
         });
-        if (conflict) {
+        if (concurrentCount >= capacite) {
           throw new BadRequestException(
-            `Ce créneau est déjà réservé. Veuillez choisir une autre date ou un autre horaire.`,
+            `La salle "${salle?.nom ?? ''}" a atteint sa capacité maximale (${capacite} patient${capacite > 1 ? 's' : ''}) sur ce créneau. Veuillez choisir une autre date, un autre horaire, ou une autre salle.`,
           );
         }
       }
@@ -2101,12 +2109,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   async createSalle(data: any) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
+    const parsedCapacite = parseInt(data.capacite, 10);
+    const capacite = Number.isFinite(parsedCapacite) && parsedCapacite > 0 ? parsedCapacite : 1;
     return this.prisma.salle.create({
       data: {
         serviceId,
         nom: data.nom,
         numero: data.numero,
-        capacite: parseInt(data.capacite) || 1,
+        capacite,
         equipement: data.equipement || '',
       },
     });
