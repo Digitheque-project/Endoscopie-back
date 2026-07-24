@@ -808,11 +808,25 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       rendezVous: { include: { salle: true } },
     } as const;
 
-    // Cherche par ID local OU par externalId
+    // Cherche par ID local OU par externalId — SANS filtrer par serviceId : externalId est
+    // unique au niveau de toute la table, et deux environnements (ex. local vs déployé) ont pu
+    // dériver sur des valeurs ENDOSCOPIE_SERVICE_ID différentes tout en partageant la même base.
+    // Filtrer par serviceId ici masquerait une ligne déjà mirroité sous l'autre valeur et
+    // provoquerait un P2002 au create() ci-dessous au lieu de la retrouver.
     let prescription = await this.prisma.prescription.findFirst({
-      where: { serviceId, OR: [{ id }, { externalId: id }] },
+      where: { OR: [{ id }, { externalId: id }] },
       include,
     });
+    // Ligne déjà mirroitée mais sous une autre valeur de serviceId (dérive de config) — on la
+    // réaligne sur celle actuellement utilisée pour qu'elle réapparaisse dans les listages
+    // (getPrescriptions) qui, eux, filtrent bien par serviceId.
+    if (prescription && prescription.serviceId !== serviceId) {
+      prescription = await this.prisma.prescription.update({
+        where: { id: prescription.id },
+        data: { serviceId },
+        include,
+      });
+    }
 
     // prescriptionExternalId (regroupement multi-examens) est mis en cache en local dès
     // qu'on le voit en direct côté externe — celui-ci ne renvoyant qu'un sous-ensemble
@@ -858,11 +872,18 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         // d'échouer.
         if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
           const existingNow = await this.prisma.prescription.findFirst({
-            where: { serviceId, OR: [{ id }, { externalId: id }] },
+            where: { OR: [{ id }, { externalId: id }] },
             include,
           });
           if (existingNow) {
-            prescription = existingNow;
+            prescription =
+              existingNow.serviceId !== serviceId
+                ? await this.prisma.prescription.update({
+                    where: { id: existingNow.id },
+                    data: { serviceId },
+                    include,
+                  })
+                : existingNow;
           } else {
             throw err;
           }
@@ -909,11 +930,19 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
    * externe et n'a jamais été mirroité localement.
    */
   private async ensureLocalPrescriptionId(id: string, serviceId: string): Promise<string> {
+    // Pas de filtre serviceId : externalId est unique sur toute la table, et une dérive de
+    // config entre environnements (ex. local vs déployé) peut avoir mirroité cette même
+    // prescription sous une autre valeur — voir getPrescriptionById pour le même correctif.
     const existing = await this.prisma.prescription.findFirst({
-      where: { serviceId, OR: [{ id }, { externalId: id }] },
-      select: { id: true },
+      where: { OR: [{ id }, { externalId: id }] },
+      select: { id: true, serviceId: true },
     });
-    if (existing) return existing.id;
+    if (existing) {
+      if (existing.serviceId !== serviceId) {
+        await this.prisma.prescription.update({ where: { id: existing.id }, data: { serviceId } });
+      }
+      return existing.id;
+    }
 
     const external = await this.fetchExternalPrescriptions(serviceId);
     const ext = external.find((e) => e.id === id);
@@ -952,10 +981,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       // plutôt que de faire échouer la planification en cours.
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
         const existingNow = await this.prisma.prescription.findFirst({
-          where: { serviceId, OR: [{ id }, { externalId: id }] },
-          select: { id: true },
+          where: { OR: [{ id }, { externalId: id }] },
+          select: { id: true, serviceId: true },
         });
-        if (existingNow) return existingNow.id;
+        if (existingNow) {
+          if (existingNow.serviceId !== serviceId) {
+            await this.prisma.prescription.update({ where: { id: existingNow.id }, data: { serviceId } });
+          }
+          return existingNow.id;
+        }
       }
       throw err;
     }
