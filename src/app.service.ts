@@ -835,21 +835,41 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      prescription = await this.prisma.prescription.create({
-        data: {
-          externalId: ext.id,
-          prescriptionExternalId,
-          serviceId,
-          patientId: ext.patientId,
-          medecinId: ext.prescripteurId ?? '',
-          typeExamen: ext.typeExamen || 'Endoscopie',
-          motif: ext.renseignements || ext.remarques || '',
-          priorite: this.mapUrgenceToPriorite(ext.urgence),
-          statut: this.mapExternalStatut(ext.statut),
-          dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
-        },
-        include,
-      });
+      try {
+        prescription = await this.prisma.prescription.create({
+          data: {
+            externalId: ext.id,
+            prescriptionExternalId,
+            serviceId,
+            patientId: ext.patientId,
+            medecinId: ext.prescripteurId ?? '',
+            typeExamen: ext.typeExamen || 'Endoscopie',
+            motif: ext.renseignements || ext.remarques || '',
+            priorite: this.mapUrgenceToPriorite(ext.urgence),
+            statut: this.mapExternalStatut(ext.statut),
+            dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
+          },
+          include,
+        });
+      } catch (err) {
+        // Une actualisation en arrière-plan (ex. Fil de prescription qui rafraîchit la
+        // liste) peut avoir mirroité cette même prescription en local entre le findFirst
+        // ci-dessus et ce create() — dans ce cas on relit la ligne déjà créée au lieu
+        // d'échouer.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          const existingNow = await this.prisma.prescription.findFirst({
+            where: { serviceId, OR: [{ id }, { externalId: id }] },
+            include,
+          });
+          if (existingNow) {
+            prescription = existingNow;
+          } else {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
     } else if (prescription.externalId) {
       const external = await this.fetchExternalPrescriptions(serviceIdOverride);
       const ext = external.find((e) => e.id === prescription!.externalId);
@@ -909,21 +929,36 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    const created = await this.prisma.prescription.create({
-      data: {
-        externalId: ext.id,
-        serviceId,
-        patientId: ext.patientId,
-        medecinId: ext.prescripteurId ?? '',
-        typeExamen: ext.typeExamen || 'Endoscopie',
-        motif: ext.renseignements || ext.remarques || '',
-        priorite: this.mapUrgenceToPriorite(ext.urgence),
-        statut: this.mapExternalStatut(ext.statut),
-        dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
-      },
-      select: { id: true },
-    });
-    return created.id;
+    try {
+      const created = await this.prisma.prescription.create({
+        data: {
+          externalId: ext.id,
+          serviceId,
+          patientId: ext.patientId,
+          medecinId: ext.prescripteurId ?? '',
+          typeExamen: ext.typeExamen || 'Endoscopie',
+          motif: ext.renseignements || ext.remarques || '',
+          priorite: this.mapUrgenceToPriorite(ext.urgence),
+          statut: this.mapExternalStatut(ext.statut),
+          dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
+        },
+        select: { id: true },
+      });
+      return created.id;
+    } catch (err) {
+      // Une actualisation en arrière-plan (ex. Fil de prescription qui rafraîchit la
+      // liste) peut avoir mirroité cette même prescription en local entre le findFirst
+      // ci-dessus et ce create() — dans ce cas la ligne existe déjà, on la réutilise
+      // plutôt que de faire échouer la planification en cours.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const existingNow = await this.prisma.prescription.findFirst({
+          where: { serviceId, OR: [{ id }, { externalId: id }] },
+          select: { id: true },
+        });
+        if (existingNow) return existingNow.id;
+      }
+      throw err;
+    }
   }
 
   /** Valeurs distinctes de typeExamen réellement présentes en base (voir getArchives — filtre en égalité stricte). */
