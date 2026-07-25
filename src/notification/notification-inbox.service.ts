@@ -1,12 +1,14 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { MessageEvent } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
 import { InboxNotification } from './notification-inbox.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseDateTimeAsUtc } from '../utils/datetime.util';
+import { getEndoscopieServiceId } from '../config/endoscopie-service';
 
 /** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
 const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
@@ -69,7 +71,38 @@ export class NotificationInboxService {
       );
     }
 
+    // Résultat d'examen reçu d'un autre service (labo, imagerie...) — on le persiste
+    // pour qu'il reste visible dans le dossier patient au-delà de la boîte de
+    // notifications (voir getResultatsExternes).
+    if (dto.type === 'RESULTAT_EXAMEN' && dto.patientId) {
+      this.handleResultatExamenNotification(dto).catch((err) =>
+        this.logger.error(`Erreur enregistrement résultat externe: ${err}`),
+      );
+    }
+
     return item;
+  }
+
+  private async handleResultatExamenNotification(dto: ReceiveNotificationDto) {
+    const payload = dto.payload ?? {};
+    const sourceService =
+      (payload['sourceServiceName'] as string | undefined) ??
+      dto.emetteur_name ??
+      dto.emitterName ??
+      null;
+    await this.prisma.resultatExterne.create({
+      data: {
+        serviceId: getEndoscopieServiceId(),
+        patientId: dto.patientId!,
+        sourceService,
+        typeExamen: (payload['typeExamen'] as string | undefined) ?? null,
+        motif: dto.motif,
+        payload: payload as Prisma.InputJsonValue,
+        entiteRefType: dto.entiteRefType,
+        entiteRefId: dto.entiteRefId,
+      },
+    });
+    this.logger.log(`Résultat externe enregistré pour patient ${dto.patientId}`);
   }
 
   private async handleBlocNotification(dto: ReceiveNotificationDto) {

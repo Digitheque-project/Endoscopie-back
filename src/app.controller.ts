@@ -577,6 +577,22 @@ export class AppController {
     return this.appService.saveResultat(data);
   }
 
+  @Get('api/resultats-externes')
+  @ApiTags('Resultats')
+  @ApiOperation({
+    summary: "Lister les résultats d'examens reçus d'un autre service pour un patient",
+    description:
+      "Résultats reçus via le webhook de notifications (type RESULTAT_EXAMEN) émis par un autre service du CHU (labo, imagerie...) — distinct de nos propres comptes-rendus d'endoscopie.",
+  })
+  @ApiQuery({ name: 'patientId', required: true })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getResultatsExternes(
+    @Query('patientId') patientId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getResultatsExternes(patientId, serviceId);
+  }
+
   // ——— Confirmation & Planification ———
   @Post('api/confirmations-planification')
   @ApiTags('Confirmations & Planification')

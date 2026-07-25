@@ -2461,6 +2461,20 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     return this.attachPatients(resultats);
   }
 
+  /**
+   * Résultats d'examens reçus d'un AUTRE service (labo, imagerie...) pour un patient —
+   * distinct de listResultats/getResultat qui couvrent nos propres comptes-rendus
+   * d'endoscopie. Alimenté par le webhook notification (voir
+   * NotificationInboxService.handleResultatExamenNotification).
+   */
+  async getResultatsExternes(patientId: string, serviceIdOverride?: string) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    return this.prisma.resultatExterne.findMany({
+      where: { serviceId, patientId },
+      orderBy: { receivedAt: 'desc' },
+    });
+  }
+
   listNotifications(status = 'ENVOYE', serviceId?: string) {
     return this.notificationService.listNotifications(status, serviceId);
   }
