@@ -11,18 +11,31 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
 import {
   getAccueilApiUrl,
+  getAuthEcosystemLoginUrl,
   getBlocApiUrl,
   getChuApiUrl,
   getDossierPatientApiUrl,
+  getEndoscopieAuthChuId,
+  getEndoscopieAuthServiceId,
   getEndoscopieChuId,
   getEndoscopieServiceId,
+  getPrescriptionExtApiUrl,
+  getServiceAccountCredentials,
 } from './config/endoscopie-service';
+import { CreatePrescriptionDto } from './dto/create-prescription.dto';
+import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
+import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
 import { CreateNoteDossierDto } from './dto/create-note-dossier.dto';
 import { parseDateTimeAsUtc } from './utils/datetime.util';
 import { NotificationService } from './notification/notification.service';
+import {
+  getNotificationApiUrl,
+  getNotificationWebhookUrl,
+} from './config/notification-service';
+import { CreateNotificationPayload } from './notification/notification.types';
 
 interface AccueilPatientRaw {
   id: string;
@@ -1400,6 +1413,31 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async getMedecins() {
+    return this.prisma.medecin.findMany({
+      orderBy: [{ nom: 'asc' }, { prenom: 'asc' }],
+    });
+  }
+
+  async getMedecinById(id: string) {
+    const medecin = await this.prisma.medecin.findUnique({ where: { id } });
+    if (!medecin) {
+      throw new NotFoundException(`Médecin ${id} introuvable`);
+    }
+    return medecin;
+  }
+
+  async createMedecin(data: CreateMedecinDto) {
+    return this.prisma.medecin.create({
+      data: {
+        nom: data.nom,
+        prenom: data.prenom,
+        specialite: data.specialite ?? null,
+        role: data.role ?? null,
+      },
+    });
+  }
+
   async getDossiersCpa(serviceIdOverride?: string) {
     const dossiers = await this.prisma.dossierCPA.findMany({
       where: this.scope(serviceIdOverride),
@@ -2421,6 +2459,20 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       orderBy: { dateCreation: 'desc' },
     });
     return this.attachPatients(resultats);
+  }
+
+  /**
+   * Résultats d'examens reçus d'un AUTRE service (labo, imagerie...) pour un patient —
+   * distinct de listResultats/getResultat qui couvrent nos propres comptes-rendus
+   * d'endoscopie. Alimenté par le webhook notification (voir
+   * NotificationInboxService.handleResultatExamenNotification).
+   */
+  async getResultatsExternes(patientId: string, serviceIdOverride?: string) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    return this.prisma.resultatExterne.findMany({
+      where: { serviceId, patientId },
+      orderBy: { receivedAt: 'desc' },
+    });
   }
 
   async generatePublicShareLink(prescriptionId: string): Promise<{ token: string; shareUrl: string }> {

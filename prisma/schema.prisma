@@ -64,29 +64,6 @@ model Prescription {
   @@index([patientId])
 }
 
-// Note libre horodatée ajoutée manuellement au dossier patient (distincte des
-// champs structurés comme les checklists ou le compte rendu) — un patient peut
-// en accumuler plusieurs au fil du parcours, d'où la relation 1-N.
-/// Résultat d'un examen réalisé par un AUTRE service du CHU (ex. laboratoire,
-/// imagerie) et reçu via webhook notification (type RESULTAT_EXAMEN), à
-/// distinguer de ResultatEndoscopie qui couvre nos propres comptes-rendus
-/// d'endoscopie. Affiché dans le dossier patient une fois reçu.
-model ResultatExterne {
-  id            String   @id @default(uuid())
-  serviceId     String
-  patientId     String
-  sourceService String?
-  typeExamen    String?
-  motif         String
-  payload       Json?
-  entiteRefType String?
-  entiteRefId   String?
-  receivedAt    DateTime @default(now())
-
-  @@index([patientId])
-  @@index([serviceId])
-}
-
 model NoteDossier {
   id             String       @id @default(uuid())
   prescriptionId String
@@ -238,9 +215,13 @@ model ResultatEndoscopie {
   observations     String?
   patientId        String
   details          String?
+  publicToken      String?      @unique
+  isPublicShared   Boolean      @default(false)
+  sharedAt         DateTime?
   prescription     Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])
   @@index([prescriptionId])
   @@index([serviceId])
+  @@index([publicToken])
 }

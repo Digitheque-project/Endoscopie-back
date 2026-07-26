@@ -84,24 +84,8 @@ export class NotificationInboxService {
   }
 
   private async handleResultatExamenNotification(dto: ReceiveNotificationDto) {
-    const payload = dto.payload ?? {};
-    const sourceService =
-      (payload['sourceServiceName'] as string | undefined) ??
-      dto.emetteur_name ??
-      dto.emitterName ??
-      null;
-    await this.prisma.resultatExterne.create({
-      data: {
-        serviceId: getEndoscopieServiceId(),
-        patientId: dto.patientId!,
-        sourceService,
-        typeExamen: (payload['typeExamen'] as string | undefined) ?? null,
-        motif: dto.motif,
-        payload: payload as Prisma.InputJsonValue,
-        entiteRefType: dto.entiteRefType,
-        entiteRefId: dto.entiteRefId,
-      },
-    });
+    // ResultatExterne table removed - external results no longer stored
+    // Payload still received but not persisted
     this.logger.log(`Résultat externe enregistré pour patient ${dto.patientId}`);
   }
 

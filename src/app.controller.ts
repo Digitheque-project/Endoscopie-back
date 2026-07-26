@@ -23,9 +23,6 @@ import { SaveChecklistAvantDto } from './dto/save-checklist-avant.dto';
 import { SaveOperationDto } from './dto/save-operation.dto';
 import { SaveChecklistApresDto } from './dto/save-checklist-apres.dto';
 import { SaveResultatDto } from './dto/save-resultat.dto';
-import { CreatePrescriptionDto } from './dto/create-prescription.dto';
-import { UpdatePrescriptionDto } from './dto/update-prescription.dto';
-import { CreateMedecinDto } from './dto/create-medecin.dto';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { SaveConfirmationPlanificationDto } from './dto/save-confirmation-planification.dto';
@@ -67,62 +64,6 @@ export class AppController {
     return this.appService.getEndoscopieConfig();
   }
 
-  @Get('api/notifications/health')
-  @ApiTags('Notifications')
-  @ApiOperation({ summary: 'Vérifier la connexion au service notification Render' })
-  getNotificationHealth() {
-    return this.appService.getNotificationHealth();
-  }
-
-  @Get('api/notifications')
-  @ApiTags('Notifications')
-  @ApiOperation({
-    summary:
-      'Lister les notifications du service Render filtrées par service Endoscopie',
-    description:
-      'Proxy GET /notifications du service notification, puis filtre celles ' +
-      'dont payload.sourceServiceId, emitter ou tout champ contient ENDOSCOPIE_SERVICE_ID.',
-  })
-  @ApiQuery({
-    name: 'status',
-    required: false,
-    description: 'Statut côté service notification (ex. ENVOYE, PENDING, LU)',
-    example: 'ENVOYE',
-  })
-  @ApiQuery({
-    name: 'serviceId',
-    required: false,
-    description: 'UUID service Endoscopie CHU (défaut: ENDOSCOPIE_SERVICE_ID)',
-    example: '38f39d38-152e-495b-8c48-28937750d9eb',
-  })
-  listNotifications(
-    @Query('status') status = 'ENVOYE',
-    @Query('serviceId') serviceId?: string,
-  ) {
-    return this.appService.listNotifications(status, serviceId);
-  }
-
-  @Post('api/notifications')
-  @ApiTags('Notifications')
-  @ApiOperation({ summary: 'Envoyer une notification au service Render' })
-  @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['type', 'motif'],
-      properties: {
-        type: { type: 'string', example: 'MEDICAL_ALERT' },
-        motif: { type: 'string', example: 'Nouvelle prescription endoscopie' },
-        urgence: { type: 'number', example: 2 },
-        patientId: { type: 'string' },
-        entiteRefType: { type: 'string', example: 'Prescription' },
-        entiteRefId: { type: 'string' },
-        channels: { type: 'array', items: { type: 'string' }, example: ['WEB', 'SOUND'] },
-      },
-    },
-  })
-  createNotification(@Body() body: Record<string, unknown>) {
-    return this.appService.createNotification(body as never);
-  }
 
   // ——— Patients ———
   @Get('api/patients')
@@ -162,106 +103,6 @@ export class AppController {
     return this.appService.getExamTypes();
   }
 
-  // ——— Médecins ———
-  @Get('api/medecins')
-  @ApiTags('Médecins')
-  @ApiOperation({ summary: 'Lister les médecins' })
-  async getMedecins() {
-    return this.appService.getMedecins();
-  }
-
-  @Get('api/medecins/:id')
-  @ApiTags('Médecins')
-  @ApiOperation({ summary: 'Récupérer un médecin par ID' })
-  @ApiParam({ name: 'id', description: 'UUID du médecin' })
-  async getMedecinById(@Param('id') id: string) {
-    return this.appService.getMedecinById(id);
-  }
-
-  @Post('api/medecins')
-  @ApiTags('Médecins')
-  @ApiOperation({ summary: '[POST] Créer un médecin', operationId: 'createMedecin' })
-  @ApiBody({ type: CreateMedecinDto })
-  async createMedecin(@Body() data: CreateMedecinDto) {
-    return this.appService.createMedecin(data);
-  }
-
-  // ——— Prescriptions ———
-  @Get('api/prescriptions')
-  @ApiTags('Prescriptions')
-  @ApiOperation({
-    summary: 'Lister toutes les prescriptions',
-    description:
-      "Une prescription externe multi-examens (tableau `demandes`, ex. venant d'un autre service) est automatiquement éclatée : chaque examen apparaît ici comme sa propre prescription, avec son propre statut. Les prescriptions issues d'une même demande externe partagent le même prescriptionExternalId.",
-  })
-  @ApiQuery({ name: 'serviceId', required: false })
-  async getPrescriptions(@Query('serviceId') serviceId?: string) {
-    return this.appService.getPrescriptions(serviceId);
-  }
-
-  @Get('api/prescriptions/pending-reports')
-  @ApiTags('Prescriptions')
-  @ApiOperation({ summary: "Lister les prescriptions dont l'examen est terminé mais sans compte-rendu" })
-  @ApiQuery({ name: 'serviceId', required: false })
-  async getPendingReports(@Query('serviceId') serviceId?: string) {
-    return this.appService.getPendingReports(serviceId);
-  }
-
-  @Get('api/prescriptions/multi-examens')
-  @ApiTags('Prescriptions')
-  @ApiOperation({
-    summary: 'Lister les prescriptions issues d’une demande à examens multiples',
-    description:
-      "Renvoie les prescriptions dont la demande d'origine (service externe, tableau `demandes`) comportait plusieurs examens. Chaque examen reste une prescription distincte et planifiable indépendamment ; les prescriptions d'un même groupe partagent le même prescriptionExternalId.",
-  })
-  @ApiQuery({ name: 'serviceId', required: false })
-  async getPrescriptionsMultiExamens(@Query('serviceId') serviceId?: string) {
-    return this.appService.getPrescriptionsMultiExamens(serviceId);
-  }
-
-  @Get('api/prescriptions/:id')
-  @ApiTags('Prescriptions')
-  @ApiOperation({ summary: 'Récupérer une prescription par ID' })
-  @ApiParam({ name: 'id', description: 'UUID de la prescription' })
-  @ApiQuery({ name: 'serviceId', required: false })
-  async getPrescriptionById(
-    @Param('id') id: string,
-    @Query('serviceId') serviceId?: string,
-  ) {
-    return this.appService.getPrescriptionById(id, serviceId);
-  }
-
-  @Post('api/prescriptions')
-  @ApiTags('Prescriptions')
-  @ApiOperation({
-    summary: '[POST] Créer une prescription',
-    operationId: 'createPrescription',
-    description:
-      "Pour une prescription multi-examens (ex. venant d'un autre service), renseigner typeExamensSupplementaires en plus de typeExamen : chaque examen est envoyé comme une demande distincte au service externe et miré localement comme sa propre prescription.",
-  })
-  @ApiBody({ type: CreatePrescriptionDto })
-  @ApiOkResponse({
-    description:
-      "Prescription créée. Renvoie un objet unique pour un seul examen, ou un tableau de prescriptions (une par examen) si typeExamensSupplementaires a été renseigné.",
-  })
-  async createPrescription(@Body() data: CreatePrescriptionDto) {
-    return this.appService.createPrescription(data);
-  }
-
-  @Patch('api/prescriptions/:id')
-  @ApiTags('Prescriptions')
-  @ApiOperation({
-    summary: '[PATCH] Mettre à jour une prescription',
-    operationId: 'updatePrescription',
-  })
-  @ApiBody({ type: UpdatePrescriptionDto })
-  @ApiParam({ name: 'id', description: 'UUID de la prescription' })
-  async updatePrescription(
-    @Param('id') id: string,
-    @Body() data: UpdatePrescriptionDto,
-  ) {
-    return this.appService.updatePrescription(id, data);
-  }
 
   @Get('api/archives/types-examen')
   @ApiTags('Archives')
@@ -577,22 +418,6 @@ export class AppController {
     return this.appService.saveResultat(data);
   }
 
-  @Get('api/resultats-externes')
-  @ApiTags('Resultats')
-  @ApiOperation({
-    summary: "Lister les résultats d'examens reçus d'un autre service pour un patient",
-    description:
-      "Résultats reçus via le webhook de notifications (type RESULTAT_EXAMEN) émis par un autre service du CHU (labo, imagerie...) — distinct de nos propres comptes-rendus d'endoscopie.",
-  })
-  @ApiQuery({ name: 'patientId', required: true })
-  @ApiQuery({ name: 'serviceId', required: false })
-  async getResultatsExternes(
-    @Query('patientId') patientId: string,
-    @Query('serviceId') serviceId?: string,
-  ) {
-    return this.appService.getResultatsExternes(patientId, serviceId);
-  }
-
   // ——— Confirmation & Planification ———
   @Post('api/confirmations-planification')
   @ApiTags('Confirmations & Planification')
@@ -603,6 +428,52 @@ export class AppController {
   @ApiBody({ type: SaveConfirmationPlanificationDto })
   async saveConfirmationPlanification(@Body() data: SaveConfirmationPlanificationDto) {
     return this.appService.saveConfirmationPlanification(data);
+  }
+
+  // ——— Partage Public de Résultats ———
+  @Post('api/resultats/:prescriptionId/share')
+  @ApiTags('Resultats')
+  @ApiOperation({
+    summary: '[POST] Générer un lien public de partage pour les résultats',
+    description: 'Crée un token unique et un lien de partage public pour accéder au résultat sans authentification',
+    operationId: 'generatePublicShareLink',
+  })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  @ApiOkResponse({
+    description: 'Lien de partage généré',
+    schema: {
+      type: 'object',
+      properties: {
+        token: { type: 'string', example: '5f8c9e2a7b3d1f6a4c9e' },
+        shareUrl: { type: 'string', example: 'https://api.endoscopie.com/api/resultats/public/5f8c9e2a7b3d1f6a4c9e' },
+      },
+    },
+  })
+  async generatePublicShareLink(@Param('prescriptionId') prescriptionId: string) {
+    return this.appService.generatePublicShareLink(prescriptionId);
+  }
+
+  @Get('api/resultats/public/:token')
+  @ApiTags('Resultats')
+  @ApiOperation({
+    summary: '[GET] Accéder aux résultats avec un lien public',
+    description: 'Endpoint public - pas d\'authentification requise. Utilise le token généré par /api/resultats/:prescriptionId/share',
+    operationId: 'getResultatPublic',
+  })
+  @ApiParam({ name: 'token', description: 'Token de partage public unique' })
+  async getResultatPublic(@Param('token') token: string) {
+    return this.appService.getResultatByPublicToken(token);
+  }
+
+  @Post('api/resultats/:prescriptionId/unshare')
+  @ApiTags('Resultats')
+  @ApiOperation({
+    summary: '[POST] Révoquer le lien public de partage',
+    operationId: 'revokePublicShareLink',
+  })
+  @ApiParam({ name: 'prescriptionId', description: 'UUID de la prescription' })
+  async revokePublicShareLink(@Param('prescriptionId') prescriptionId: string) {
+    return this.appService.revokePublicShareLink(prescriptionId);
   }
 
   @Get('api/confirmations-planification')
