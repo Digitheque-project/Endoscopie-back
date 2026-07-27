@@ -9,8 +9,8 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { Roles } from '../decorators/roles.decorator';
-import { RolesGuard } from '../guards/roles.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 import { ServiceSourceService } from '../services/service-source.service';
 import {
   CreateServiceSourceDto,
