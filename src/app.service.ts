@@ -23,6 +23,7 @@ import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
 import { CreateNoteDossierDto } from './dto/create-note-dossier.dto';
 import { parseDateTimeAsUtc } from './utils/datetime.util';
 import { NotificationService } from './notification/notification.service';
+import { ServiceSourceService } from './services/service-source.service';
 
 interface AccueilPatientRaw {
   id: string;
@@ -46,6 +47,7 @@ export class AppService {
   constructor(
     private prisma: PrismaService,
     private notificationService: NotificationService,
+    private serviceSourceService: ServiceSourceService,
   ) {}
 
 
@@ -1336,7 +1338,12 @@ export class AppService {
   private async markTermineIfComplete(prescriptionId: string) {
     const prescription = await this.prisma.prescription.findUnique({
       where: { id: prescriptionId },
-      include: { checklistApres: true, resultatEndoscopie: true, rendezVous: true },
+      include: {
+        checklistApres: true,
+        resultatEndoscopie: true,
+        rendezVous: true,
+        medecinPrescripteur: true,
+      },
     });
     if (!prescription) return;
     if (!prescription.checklistApres?.estValide || !prescription.resultatEndoscopie) return;
@@ -1351,6 +1358,25 @@ export class AppService {
         where: { id: prescription.rendezVous.id },
         data: { statut: 'Terminé' },
       });
+    }
+
+    // Notifier les services sources que le résultat est prêt
+    try {
+      const patientInfo = await this.getPatientById(prescription.patientId);
+      const prescripteur = prescription.medecinPrescripteur?.nom
+        ? `Dr. ${prescription.medecinPrescripteur.nom}`
+        : 'Dr. Inconnu';
+
+      await this.serviceSourceService.notifyServiceOfExam(
+        prescription.id,
+        patientInfo?.nom || 'Inconnu',
+        patientInfo?.prenom || '',
+        prescription.serviceId,
+        prescripteur,
+        prescription.patientId,
+      );
+    } catch (error) {
+      this.logger.error('Failed to notify service sources:', error);
     }
   }
 

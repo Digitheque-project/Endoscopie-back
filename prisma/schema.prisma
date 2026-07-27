@@ -254,3 +254,35 @@ model LogAccesExterne {
   @@index([patientId])
   @@index([timestamp])
 }
+
+model ServiceSource {
+  id              String   @id @default(uuid())
+  nom             String   @unique
+  urlWebhook      String
+  actif           Boolean  @default(true)
+  contact         String?
+  hopital         String?
+  createdAt       DateTime @default(now())
+  lastNotifiedAt  DateTime?
+  logsWebhook     LogWebhook[]
+
+  @@index([actif])
+}
+
+model LogWebhook {
+  id              String       @id @default(uuid())
+  serviceSourceId String
+  prescriptionId  String
+  patientId       String
+  eventType       String       @default("EXAMEN_TERMINE")
+  httpStatus      Int?
+  tentatives      Int          @default(1)
+  prochainEssai   DateTime?
+  timestamp       DateTime     @default(now())
+  serviceSource   ServiceSource @relation(fields: [serviceSourceId], references: [id], onDelete: Cascade)
+
+  @@index([serviceSourceId])
+  @@index([prescriptionId])
+  @@index([patientId])
+  @@index([timestamp])
+}
