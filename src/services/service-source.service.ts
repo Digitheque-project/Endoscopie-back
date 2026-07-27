@@ -7,6 +7,10 @@ import {
   WebhookNotificationDto,
 } from '../dto/service-source.dto';
 
+const NOTIFICATION_SERVICE_URL =
+  process.env.NOTIFICATION_SERVICE_URL ||
+  'https://notification-back-xrl2.onrender.com';
+
 @Injectable()
 export class ServiceSourceService {
   private readonly logger = new Logger(ServiceSourceService.name);
@@ -115,15 +119,27 @@ export class ServiceSourceService {
     if (!service) return;
 
     try {
-      const response = await fetch(service.urlWebhook, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Endoscopie-API/1.0',
+      // Utiliser le service de notification pour envoyer le webhook
+      const response = await fetch(
+        `${NOTIFICATION_SERVICE_URL}/api/notifications/webhook`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            url: service.urlWebhook,
+            payload: payload,
+            metadata: {
+              serviceSourceId: serviceId,
+              serviceName: service.nom,
+              prescriptionId,
+              patientId,
+            },
+          }),
+          signal: AbortSignal.timeout(10000),
         },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10000), // 10 secondes timeout
-      });
+      );
 
       const httpStatus = response.status;
 
@@ -144,12 +160,12 @@ export class ServiceSourceService {
 
       if (!response.ok) {
         this.logger.warn(
-          `Webhook failed for service ${service.nom}: ${httpStatus}`,
+          `Webhook notification failed for service ${service.nom}: ${httpStatus}`,
         );
       }
     } catch (error) {
       this.logger.error(
-        `Failed to send webhook to ${service.urlWebhook}:`,
+        `Failed to send webhook notification for ${service.nom}:`,
         error,
       );
 
