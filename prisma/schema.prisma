@@ -225,3 +225,32 @@ model ResultatEndoscopie {
   @@index([serviceId])
   @@index([publicToken])
 }
+
+model ServiceExterne {
+  id        String   @id @default(uuid())
+  nom       String   @unique
+  apiKey    String   @unique
+  actif     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+  contact   String?
+  hopital   String?
+  logsAcces LogAccesExterne[]
+
+  @@index([apiKey])
+}
+
+model LogAccesExterne {
+  id             String          @id @default(uuid())
+  serviceExterneId String
+  prescriptionId String
+  patientId      String
+  statut         Int
+  timestamp      DateTime        @default(now())
+  serviceExterne ServiceExterne  @relation(fields: [serviceExterneId], references: [id], onDelete: Cascade)
+
+  @@index([serviceExterneId])
+  @@index([prescriptionId])
+  @@index([patientId])
+  @@index([timestamp])
+}
