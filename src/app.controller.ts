@@ -178,6 +178,19 @@ export class AppController {
     return this.appService.getDossierCpaById(id);
   }
 
+  @Get('api/dossiers-cpa/:id/verifier-statut')
+  @ApiTags('Dossiers CPA')
+  @ApiOperation({
+    summary: 'Vérifier manuellement le statut de la demande CPA auprès du Bloc Opératoire',
+    description:
+      'Filet de sécurité si le webhook de callback (CPA_RESULTAT/VPA_REALISEE) n\'est jamais arrivé : ' +
+      'interroge GET /demandes-cpa-externes/:id/statut sur le Bloc et applique localement la décision si disponible.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID du dossier CPA' })
+  async verifierStatutCpaBloc(@Param('id') id: string) {
+    return this.appService.verifierStatutCpaBloc(id);
+  }
+
   @Post('api/dossiers-cpa')
   @Roles('MAJOR')
   @ApiTags('Dossiers CPA')
