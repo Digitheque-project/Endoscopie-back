@@ -413,6 +413,20 @@ export class AppService {
     });
   }
 
+  async getPrescriptions(serviceIdOverride?: string) {
+    const prescriptions = await this.prisma.prescription.findMany({
+      where: this.scope(serviceIdOverride),
+      include: {
+        medecinPrescripteur: true,
+        rendezVous: true,
+        checklistApres: true,
+        dossierCPA: true,
+      },
+      orderBy: { dateDemande: 'desc' },
+    });
+    return this.attachPatients(prescriptions);
+  }
+
   async getDossiersCpa(serviceIdOverride?: string) {
     const dossiers = await this.prisma.dossierCPA.findMany({
       where: this.scope(serviceIdOverride),

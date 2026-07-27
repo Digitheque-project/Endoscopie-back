@@ -95,6 +95,15 @@ export class AppController {
     return this.appService.getPatientTraceability(id);
   }
 
+  // ——— Prescriptions ———
+  @Get('api/prescriptions')
+  @ApiTags('Prescriptions')
+  @ApiOperation({ summary: 'Lister toutes les prescriptions' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPrescriptions(@Query('serviceId') serviceId?: string) {
+    return this.appService.getPrescriptions(serviceId);
+  }
+
   // ——— Types d'examen ———
   @Get('api/exam-types')
   @ApiTags('Configuration')
