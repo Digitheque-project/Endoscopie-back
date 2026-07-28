@@ -448,6 +448,30 @@ export class AppService {
     return this.attachPatients(withMedecin);
   }
 
+  async getPrescriptionById(id: string, serviceIdOverride?: string) {
+    const prescription = await this.prisma.prescription.findFirst({
+      where: { id, ...this.scope(serviceIdOverride) },
+      include: {
+        rendezVous: true,
+        checklistAvant: true,
+        checklistApres: true,
+        dossierCPA: true,
+        resultatEndoscopie: true,
+        operationEndoscopie: true,
+        notes: true,
+      },
+    });
+    if (!prescription) {
+      throw new NotFoundException(`Prescription ${id} introuvable`);
+    }
+    const withMedecin = await this.medecinsService.attachMedecin(
+      prescription,
+      'medecinId',
+      'medecinPrescripteur',
+    );
+    return this.attachPatient(withMedecin);
+  }
+
   async getMedecins() {
     return this.medecinsService.getEndoscopieMedecins();
   }

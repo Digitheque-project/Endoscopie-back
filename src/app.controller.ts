@@ -104,6 +104,18 @@ export class AppController {
     return this.appService.getPrescriptions(serviceId);
   }
 
+  @Get('api/prescriptions/:id')
+  @ApiTags('Prescriptions')
+  @ApiOperation({ summary: 'Récupérer une prescription par ID' })
+  @ApiParam({ name: 'id', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPrescriptionById(
+    @Param('id') id: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getPrescriptionById(id, serviceId);
+  }
+
   // ——— Médecins ———
   @Get('api/medecins')
   @ApiTags('Médecins')
