@@ -146,7 +146,9 @@ export class AppService {
   async getArchiveTypesExamen(serviceIdOverride?: string): Promise<string[]> {
     const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
     const rows = await this.prisma.prescription.findMany({
-      where: { serviceId },
+      // Même filtre que getArchives (statut Terminé uniquement) pour ne pas proposer un
+      // type d'examen qui ne renverrait ensuite aucun résultat dans l'archive.
+      where: { serviceId, statut: 'Terminé' },
       select: { typeExamen: true },
       distinct: ['typeExamen'],
       orderBy: { typeExamen: 'asc' },
@@ -174,6 +176,9 @@ export class AppService {
     const prescriptions = await this.prisma.prescription.findMany({
       where: {
         serviceId,
+        // Seuls les examens Terminé (compte rendu enregistré, voir markTermineIfComplete)
+        // apparaissent dans l'archive — un patient encore en cours n'y a pas sa place.
+        statut: 'Terminé',
         ...(Object.keys(dateFilter).length ? { dateDemande: dateFilter } : {}),
       },
       include: {
@@ -230,6 +235,7 @@ export class AppService {
         patientId: p.patientId,
         patientNom: p.patient?.nom ?? 'INCONNU',
         patientPrenom: p.patient?.prenom ?? '',
+        priseEnChargeId: p.patient?.priseEnChargeId ?? null,
         typeExamen: p.typeExamen,
         typeAnesthesie: p.rendezVous?.typeAnesthesie ?? null,
         dateDemande: p.dateDemande,
