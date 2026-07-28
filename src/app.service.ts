@@ -26,6 +26,7 @@ import { NotificationService } from './notification/notification.service';
 import { NotificationInboxService } from './notification/notification-inbox.service';
 import { ServiceSourceService } from './services/service-source.service';
 import { MedecinsService } from './services/medecins.service';
+import { CpaBlocService } from './services/cpa-bloc.service';
 
 interface AccueilPatientRaw {
   id: string;
@@ -52,6 +53,7 @@ export class AppService {
     private notificationInboxService: NotificationInboxService,
     private serviceSourceService: ServiceSourceService,
     private medecinsService: MedecinsService,
+    private cpaBlocService: CpaBlocService,
   ) {}
 
 
@@ -589,103 +591,26 @@ export class AppService {
   }
 
   /**
-   * Vérifie manuellement le statut d'une demande CPA auprès du Bloc Opératoire
-   * (GET /demandes-cpa-externes/:id/statut, public — pas de JWT requis). Sert de
-   * filet de sécurité si le webhook de callback (CPA_RESULTAT/VPA_REALISEE) n'est
-   * jamais arrivé (Bloc endormi au moment de la décision, callback perdu, etc.) :
-   * applique localement la décision si le Bloc en a une, comme le ferait le webhook.
+   * Vérifie manuellement le statut d'une demande CPA auprès du Bloc Opératoire. Sert de
+   * filet de sécurité si la notification (CPA_RESULTAT/VPA_REALISEE) n'est jamais arrivée
+   * (Bloc endormi au moment de la décision, notification perdue, etc.) — délègue le GET
+   * + application de la décision à CpaBlocService, partagé avec le traitement automatique
+   * des notifications (voir NotificationInboxService).
    */
   async verifierStatutCpaBloc(id: string, serviceIdOverride?: string) {
     const dossier = await this.getDossierCpaById(id, serviceIdOverride);
-    if (!dossier.blocDemandeId) {
-      return { ...dossier, blocSync: 'non_transmis' as const };
-    }
+    const { status, dossier: synced } = await this.cpaBlocService.synchroniserDepuisBloc(id);
 
-    const blocUrl = getBlocApiUrl();
-    if (!blocUrl) {
-      return { ...dossier, blocSync: 'bloc_non_configure' as const };
-    }
-
-    let remote: Record<string, unknown>;
-    try {
-      const res = await fetch(
-        `${blocUrl}/demandes-cpa-externes/${dossier.blocDemandeId}/statut`,
-        { signal: AbortSignal.timeout(8000) },
-      );
-      if (!res.ok) {
-        return { ...dossier, blocSync: 'erreur_bloc' as const };
-      }
-      remote = (await res.json()) as Record<string, unknown>;
-    } catch (e) {
-      this.logger.warn(
-        `Vérification statut CPA Bloc échouée pour ${dossier.blocDemandeId}: ${e instanceof Error ? e.message : e}`,
-      );
-      return { ...dossier, blocSync: 'erreur_reseau' as const };
-    }
-
-    // Forme de la réponse non documentée côté Bloc : on tente les emplacements les
-    // plus probables plutôt que de supposer un schéma strict.
-    const cpa = (remote['cpa'] as Record<string, unknown>) ?? remote;
-    const decision =
-      (cpa['decision'] as string | undefined) ??
-      (cpa['decisionCpa'] as string | undefined);
-    const dateCpaRaw = cpa['dateCpa'] as string | undefined;
-    const dateVpaRaw =
-      (remote['dateVpa'] as string | undefined) ??
-      (cpa['dateVpa'] as string | undefined);
-    const observations = cpa['observations'] as string | undefined;
-
-    if (!decision && !dateVpaRaw) {
-      // Rien de nouveau côté Bloc : toujours en attente.
-      return { ...dossier, blocSync: 'en_attente' as const };
-    }
-
-    const statutMap: Record<string, string> = {
-      APTE: 'CPA Favorable',
-      INAPTE: 'CPA Défavorable',
-      REPORT: 'CPA Reportée',
-    };
-    const cascadeStatutMap: Record<string, string> = {
-      APTE: 'Confirmé',
-      INAPTE: 'CPA Défavorable',
-      REPORT: 'CPA Reportée',
-    };
-
-    const updated = await this.prisma.dossierCPA.update({
-      where: { id: dossier.id },
-      data: {
-        ...(decision && {
-          decisionCpa: decision,
-          statut: statutMap[decision] ?? dossier.statut,
-        }),
-        ...(dateCpaRaw && { dateCpa: parseDateTimeAsUtc(dateCpaRaw) }),
-        ...(dateVpaRaw && {
-          dateVpa: parseDateTimeAsUtc(dateVpaRaw),
-          dateValidation: parseDateTimeAsUtc(dateVpaRaw),
-        }),
-        ...(observations && { observations }),
-      },
-      include: { prescription: true },
-    });
-
-    if (decision && cascadeStatutMap[decision] && dossier.prescriptionId) {
-      const cascadeStatut = cascadeStatutMap[decision];
-      await this.prisma.prescription.update({
-        where: { id: dossier.prescriptionId },
-        data: { statut: cascadeStatut },
-      });
-      await this.prisma.rendezVous.updateMany({
-        where: { prescriptionId: dossier.prescriptionId },
-        data: { statut: cascadeStatut },
-      });
+    if (status !== 'synchronise' || !synced) {
+      return { ...dossier, blocSync: status };
     }
 
     const withMedecin = await this.medecinsService.attachMedecin(
-      updated,
+      synced,
       'anesthesisteId',
       'anesthesiste',
     );
-    return { ...(await this.attachPatient(withMedecin)), blocSync: 'synchronise' as const };
+    return { ...(await this.attachPatient(withMedecin)), blocSync: status };
   }
 
   /**

@@ -1,14 +1,12 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { MessageEvent } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
 import { InboxNotification } from './notification-inbox.types';
 import { PrismaService } from '../prisma/prisma.service';
-import { parseDateTimeAsUtc } from '../utils/datetime.util';
-import { getEndoscopieServiceId } from '../config/endoscopie-service';
+import { CpaBlocService } from '../services/cpa-bloc.service';
 
 /** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
 const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
@@ -21,7 +19,10 @@ export class NotificationInboxService {
   private readonly items: InboxNotification[] = [];
   private readonly events$ = new Subject<InboxNotification>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cpaBlocService: CpaBlocService,
+  ) {}
 
   getWebhookSecret(): string | undefined {
     return process.env.NOTIFICATION_WEBHOOK_SECRET?.trim() || undefined;
@@ -89,74 +90,30 @@ export class NotificationInboxService {
     this.logger.log(`Résultat externe enregistré pour patient ${dto.patientId}`);
   }
 
+  /**
+   * Confirmé avec le développeur du Bloc : cette notification (CPA_RESULTAT /
+   * VPA_REALISEE) sert uniquement de signal "c'est terminé", pas de source de vérité —
+   * son `payload` n'est pas documenté/garanti. On déclenche donc systématiquement un GET
+   * explicite vers le Bloc (via CpaBlocService, partagé avec le bouton manuel "Vérifier
+   * statut CPA") pour récupérer et appliquer le résultat authoritative, plutôt que de
+   * faire confiance aux champs bruts reçus ici.
+   */
   private async handleBlocNotification(dto: ReceiveNotificationDto) {
     const dossierId = dto.entiteRefId;
     if (!dossierId) return;
 
-    const dossier = await this.prisma.dossierCPA.findUnique({
-      where: { id: dossierId },
-    });
-    if (!dossier) {
+    const { status } = await this.cpaBlocService.synchroniserDepuisBloc(dossierId);
+    if (status === 'dossier_introuvable') {
       this.logger.warn(`Dossier CPA introuvable pour entiteRefId=${dossierId}`);
       return;
     }
-
-    const payload = dto.payload ?? {};
-
-    if (dto.type === 'CPA_RESULTAT') {
-      const decision = payload['decision'] as string | undefined;
-      const dateCpaRaw = payload['dateCpa'] as string | undefined;
-      const observations = payload['observations'] as string | undefined;
-
-      const statutMap: Record<string, string> = {
-        APTE: 'CPA Favorable',
-        INAPTE: 'CPA Défavorable',
-        REPORT: 'CPA Reportée',
-      };
-      // Statut cascadé sur Prescription/RendezVous pour que le patient ne reste pas
-      // bloqué indéfiniment sur "CPA demandée" côté Major/Médecin.
-      const cascadeStatutMap: Record<string, string> = {
-        APTE: 'Confirmé',
-        INAPTE: 'CPA Défavorable',
-        REPORT: 'CPA Reportée',
-      };
-
-      await this.prisma.dossierCPA.update({
-        where: { id: dossierId },
-        data: {
-          ...(decision && { decisionCpa: decision, statut: statutMap[decision] ?? dossier.statut }),
-          ...(dateCpaRaw && { dateCpa: parseDateTimeAsUtc(dateCpaRaw) }),
-          ...(observations && { observations }),
-        },
-      });
-
-      if (decision && cascadeStatutMap[decision] && dossier.prescriptionId) {
-        const cascadeStatut = cascadeStatutMap[decision];
-        await this.prisma.prescription.update({
-          where: { id: dossier.prescriptionId },
-          data: { statut: cascadeStatut },
-        });
-        await this.prisma.rendezVous.updateMany({
-          where: { prescriptionId: dossier.prescriptionId },
-          data: { statut: cascadeStatut },
-        });
-      }
-
-      this.logger.log(`CPA_RESULTAT appliqué au dossier ${dossierId}: ${decision}`);
+    if (status !== 'synchronise') {
+      this.logger.warn(
+        `Notification [${dto.type}] reçue pour le dossier ${dossierId} mais synchronisation Bloc non concluante (${status})`,
+      );
+      return;
     }
-
-    if (dto.type === 'VPA_REALISEE') {
-      const dateVpaRaw = payload['dateVpa'] as string | undefined;
-      await this.prisma.dossierCPA.update({
-        where: { id: dossierId },
-        data: {
-          statut: 'VPA Réalisée',
-          ...(dateVpaRaw && { dateVpa: parseDateTimeAsUtc(dateVpaRaw) }),
-          dateValidation: dateVpaRaw ? parseDateTimeAsUtc(dateVpaRaw) : new Date(),
-        },
-      });
-      this.logger.log(`VPA_REALISEE appliqué au dossier ${dossierId}`);
-    }
+    this.logger.log(`Notification [${dto.type}] appliquée au dossier ${dossierId}`);
   }
 
   listInbox(limit = 50): InboxNotification[] {

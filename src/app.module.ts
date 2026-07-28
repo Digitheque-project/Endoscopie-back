@@ -9,6 +9,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ExternalApiModule } from './external-api/external-api.module';
 import { ServiceSourceModule } from './service-source/service-source.module';
 import { MedecinsModule } from './services/medecins.module';
+import { CpaBlocModule } from './services/cpa-bloc.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { MedecinsModule } from './services/medecins.module';
     ExternalApiModule,
     ServiceSourceModule,
     MedecinsModule,
+    CpaBlocModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: RolesGuard }],
