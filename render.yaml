@@ -36,7 +36,7 @@ services:
       - key: ACCUEIL_API_URL
         value: https://acceuil-back.onrender.com
       - key: NOTIFICATION_API_URL
-        value: https://notification-back-xrl2.onrender.com
+        value: https://service-notification-nlqp.onrender.com
       - key: NOTIFICATION_WEBHOOK_SECRET
         sync: false
       - key: BLOC_API_URL
@@ -58,7 +58,7 @@ services:
       - key: AUTH_USER_SERVICE_URL
         value: https://user-services-1sm6.onrender.com
       - key: DOSSIER_PATIENT_API_URL
-        value: https://dossier-patient-back-ri3e.onrender.com/dossier-patient
+        value: https://dossier-patient-back-6s2j.onrender.com/dossier-patient
       # URL Render du front une fois déployé — nécessaire pour le CORS
       - key: FRONTEND_URL
         sync: false

@@ -9,7 +9,7 @@ import {
 
 const NOTIFICATION_SERVICE_URL =
   process.env.NOTIFICATION_SERVICE_URL ||
-  'https://notification-back-xrl2.onrender.com';
+  'https://service-notification-nlqp.onrender.com';
 
 @Injectable()
 export class ServiceSourceService {

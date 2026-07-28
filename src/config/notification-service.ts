@@ -1,8 +1,8 @@
-/** API notifications Render — https://notification-back-xrl2.onrender.com/api/docs */
+/** API notifications Render — https://service-notification-nlqp.onrender.com/api/docs */
 export function getNotificationApiUrl(): string {
   return (
     process.env.NOTIFICATION_API_URL?.trim().replace(/\/$/, '') ||
-    'https://notification-back-xrl2.onrender.com'
+    'https://service-notification-nlqp.onrender.com'
   );
 }
 

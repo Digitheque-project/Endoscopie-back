@@ -18,7 +18,7 @@ export class NotificationService {
 
   /**
    * Envoie une notification temps réel à tout le service Endoscopie via
-   * POST /notifications/service (voir notification-back-xrl2.onrender.com/api/docs) —
+   * POST /notifications/service (voir service-notification-nlqp.onrender.com/api/docs) —
    * ce service notifie par serviceId + WebSocket, pas par le modèle
    * emitter/recipient/motif utilisé auparavant. On traduit notre payload interne
    * vers son schéma (NotifyServiceDto), et on garde tout le détail métier
