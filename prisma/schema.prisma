@@ -8,17 +8,6 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model Medecin {
-  id            String         @id @default(uuid())
-  nom           String
-  prenom        String
-  specialite    String?
-  role          String?
-  dossiersCPA   DossierCPA[]
-  rendezVous    RendezVous[]
-  prescriptions Prescription[]
-}
-
 model Salle {
   id         String       @id @default(uuid())
   nom        String
@@ -57,7 +46,6 @@ model Prescription {
   operationEndoscopie OperationEndoscopie?
   resultatEndoscopie  ResultatEndoscopie?
   rendezVous          RendezVous?
-  medecinPrescripteur Medecin?             @relation(fields: [medecinId], references: [id])
   notes               NoteDossier[]
 
   @@index([serviceId])
@@ -98,7 +86,6 @@ model RendezVous {
   // Examen additionnel réalisé dans la même séance (cas des patients ayant une double opération).
   typeExamenSecondaire String?
   serviceId      String
-  medecin        Medecin?      @relation(fields: [medecinId], references: [id])
   prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
   salle          Salle?        @relation(fields: [salleId], references: [id])
 
@@ -122,7 +109,6 @@ model DossierCPA {
   decisionCpa    String?
   dateCpa        DateTime?
   dateVpa        DateTime?
-  anesthesiste   Medecin?      @relation(fields: [anesthesisteId], references: [id])
   prescription   Prescription? @relation(fields: [prescriptionId], references: [id])
 
   @@index([patientId])

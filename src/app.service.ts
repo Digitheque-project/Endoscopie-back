@@ -25,6 +25,7 @@ import { parseDateTimeAsUtc } from './utils/datetime.util';
 import { NotificationService } from './notification/notification.service';
 import { NotificationInboxService } from './notification/notification-inbox.service';
 import { ServiceSourceService } from './services/service-source.service';
+import { MedecinsService } from './services/medecins.service';
 
 interface AccueilPatientRaw {
   id: string;
@@ -50,6 +51,7 @@ export class AppService {
     private notificationService: NotificationService,
     private notificationInboxService: NotificationInboxService,
     private serviceSourceService: ServiceSourceService,
+    private medecinsService: MedecinsService,
   ) {}
 
 
@@ -94,16 +96,13 @@ export class AppService {
           AND table_name = 'Prescription'
           AND column_name = 'serviceId'
       `;
-      const [medecins, prescriptions] = await Promise.all([
-        this.prisma.medecin.count(),
-        this.prisma.prescription.count(),
-      ]);
+      const prescriptions = await this.prisma.prescription.count();
       return {
         ok: true,
         database: 'connected',
         hasServiceIdColumn: columns.length > 0,
         endoscopieServiceId: this.getEndoscopieServiceId(),
-        counts: { medecins, prescriptions },
+        counts: { prescriptions },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -176,7 +175,6 @@ export class AppService {
         ...(Object.keys(dateFilter).length ? { dateDemande: dateFilter } : {}),
       },
       include: {
-        medecinPrescripteur: true,
         dossierCPA: true,
         checklistAvant: true,
         checklistApres: true,
@@ -186,7 +184,12 @@ export class AppService {
       orderBy: { dateDemande: 'desc' },
     });
 
-    const withPatient = await this.attachPatients(prescriptions);
+    const withMedecin = await this.medecinsService.attachMedecins(
+      prescriptions,
+      'medecinId',
+      'medecinPrescripteur',
+    );
+    const withPatient = await this.attachPatients(withMedecin);
 
     let filtered = withPatient;
     if (filters.nom) {
@@ -376,15 +379,19 @@ export class AppService {
       throw new NotFoundException(`Patient ${id} introuvable`);
     }
 
-    const [prescriptions, rendezVous, dossiersCPA] = await Promise.all([
+    const [prescriptionsRaw, rendezVous, dossiersCPA] = await Promise.all([
       this.prisma.prescription.findMany({
         where: { patientId: id, serviceId },
-        include: { medecinPrescripteur: true },
         orderBy: { dateDemande: 'desc' },
       }),
       this.prisma.rendezVous.findMany({ where: { patientId: id, serviceId } }),
       this.prisma.dossierCPA.findMany({ where: { patientId: id, serviceId } }),
     ]);
+    const prescriptions = await this.medecinsService.attachMedecins(
+      prescriptionsRaw,
+      'medecinId',
+      'medecinPrescripteur',
+    );
 
     let priseEnCharge: Record<string, unknown> | null = null;
     if (accueilPatient.priseEnChargeId) {
@@ -419,40 +426,52 @@ export class AppService {
     const prescriptions = await this.prisma.prescription.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        medecinPrescripteur: true,
         rendezVous: true,
         checklistApres: true,
         dossierCPA: true,
       },
       orderBy: { dateDemande: 'desc' },
     });
-    return this.attachPatients(prescriptions);
+    const withMedecin = await this.medecinsService.attachMedecins(
+      prescriptions,
+      'medecinId',
+      'medecinPrescripteur',
+    );
+    return this.attachPatients(withMedecin);
+  }
+
+  async getMedecins() {
+    return this.medecinsService.getEndoscopieMedecins();
   }
 
   async getDossiersCpa(serviceIdOverride?: string) {
     const dossiers = await this.prisma.dossierCPA.findMany({
       where: this.scope(serviceIdOverride),
-      include: {
-        prescription: true,
-        anesthesiste: true,
-      },
+      include: { prescription: true },
       orderBy: { id: 'desc' },
     });
-    return this.attachPatients(dossiers);
+    const withMedecin = await this.medecinsService.attachMedecins(
+      dossiers,
+      'anesthesisteId',
+      'anesthesiste',
+    );
+    return this.attachPatients(withMedecin);
   }
 
   async getDossierCpaById(id: string, serviceIdOverride?: string) {
     const dossier = await this.prisma.dossierCPA.findFirst({
       where: { id, ...this.scope(serviceIdOverride) },
-      include: {
-        prescription: true,
-        anesthesiste: true,
-      },
+      include: { prescription: true },
     });
     if (!dossier) {
       throw new NotFoundException(`Dossier CPA ${id} introuvable`);
     }
-    return this.attachPatient(dossier);
+    const withMedecin = await this.medecinsService.attachMedecin(
+      dossier,
+      'anesthesisteId',
+      'anesthesiste',
+    );
+    return this.attachPatient(withMedecin);
   }
 
   async getDossierCpaByPrescriptionId(
@@ -461,12 +480,15 @@ export class AppService {
   ) {
     const dossier = await this.prisma.dossierCPA.findFirst({
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
-      include: {
-        prescription: true,
-        anesthesiste: true,
-      },
+      include: { prescription: true },
     });
-    return dossier ? this.attachPatient(dossier) : null;
+    if (!dossier) return null;
+    const withMedecin = await this.medecinsService.attachMedecin(
+      dossier,
+      'anesthesisteId',
+      'anesthesiste',
+    );
+    return this.attachPatient(withMedecin);
   }
 
   async createDossierCpa(data: CreateDossierCpaDto) {
@@ -481,10 +503,7 @@ export class AppService {
         observations: data.observations ?? null,
         statut: data.statut || 'Brouillon',
       },
-      include: {
-        prescription: true,
-        anesthesiste: true,
-      },
+      include: { prescription: true },
     });
 
     if (data.prescriptionId) {
@@ -509,7 +528,12 @@ export class AppService {
       );
     });
 
-    return this.attachPatient(dossier);
+    const withMedecin = await this.medecinsService.attachMedecin(
+      dossier,
+      'anesthesisteId',
+      'anesthesiste',
+    );
+    return this.attachPatient(withMedecin);
   }
 
   private async notifyBlocCpa(dossier: any, data: CreateDossierCpaDto) {
@@ -641,7 +665,7 @@ export class AppService {
         }),
         ...(observations && { observations }),
       },
-      include: { prescription: true, anesthesiste: true },
+      include: { prescription: true },
     });
 
     if (decision && cascadeStatutMap[decision] && dossier.prescriptionId) {
@@ -656,7 +680,12 @@ export class AppService {
       });
     }
 
-    return { ...this.attachPatient(updated), blocSync: 'synchronise' as const };
+    const withMedecin = await this.medecinsService.attachMedecin(
+      updated,
+      'anesthesisteId',
+      'anesthesiste',
+    );
+    return { ...(await this.attachPatient(withMedecin)), blocSync: 'synchronise' as const };
   }
 
   /**
@@ -732,12 +761,14 @@ export class AppService {
             dateValidation: parseDateTimeAsUtc(data.dateValidation),
           }),
         },
-        include: {
-          prescription: true,
-          anesthesiste: true,
-        },
+        include: { prescription: true },
       });
-      return this.attachPatient(updated);
+      const withMedecin = await this.medecinsService.attachMedecin(
+        updated,
+        'anesthesisteId',
+        'anesthesiste',
+      );
+      return this.attachPatient(withMedecin);
     } catch {
       throw new NotFoundException(`Dossier CPA ${id} introuvable`);
     }
@@ -747,7 +778,6 @@ export class AppService {
     const rendezVous = await this.prisma.rendezVous.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        medecin: true,
         salle: true,
         prescription: {
           include: {
@@ -759,7 +789,12 @@ export class AppService {
         dateHeureDebut: 'asc',
       },
     });
-    return this.attachPatients(rendezVous);
+    const withMedecin = await this.medecinsService.attachMedecins(
+      rendezVous,
+      'medecinId',
+      'medecin',
+    );
+    return this.attachPatients(withMedecin);
   }
 
   async getRendezVousJour(date: string, serviceIdOverride?: string) {
@@ -777,7 +812,6 @@ export class AppService {
         },
       },
       include: {
-        medecin: true,
         salle: true,
         prescription: {
           include: {
@@ -789,7 +823,12 @@ export class AppService {
         dateHeureDebut: 'asc',
       },
     });
-    return this.attachPatients(rendezVous);
+    const withMedecin = await this.medecinsService.attachMedecins(
+      rendezVous,
+      'medecinId',
+      'medecin',
+    );
+    return this.attachPatients(withMedecin);
   }
 
   async getProcedureCountsToday(serviceIdOverride?: string) {
@@ -1024,15 +1063,6 @@ export class AppService {
       }
     }
 
-    // Garantit que les clés étrangères référencées existent réellement en local
-    // avant l'écriture — évite les violations de contrainte (P2003).
-    if (data.medecinId) {
-      await this.prisma.medecin.upsert({
-        where: { id: data.medecinId },
-        update: {},
-        create: { id: data.medecinId, nom: 'EXTERN', prenom: 'MEDECIN', specialite: null, role: null },
-      });
-    }
     const resolvedPrescriptionId = data.prescriptionId ?? null;
 
     const rendezVousPayload = {
@@ -1117,12 +1147,16 @@ export class AppService {
       const created = await this.prisma.rendezVous.create({
         data: rendezVousPayload,
         include: {
-          medecin: true,
           salle: true,
           prescription: true,
         },
       });
-      return this.attachPatient(created);
+      const withMedecin = await this.medecinsService.attachMedecin(
+        created,
+        'medecinId',
+        'medecin',
+      );
+      return this.attachPatient(withMedecin);
     } catch (error) {
       if (error instanceof BadRequestException) {
         throw error;
@@ -1249,7 +1283,6 @@ export class AppService {
         ...(reschedule && { dateHeureFin: newFin }),
       },
       include: {
-        medecin: true,
         salle: true,
         prescription: true,
       },
@@ -1269,7 +1302,12 @@ export class AppService {
       });
     }
 
-    return this.attachPatient(updated);
+    const withMedecin = await this.medecinsService.attachMedecin(
+      updated,
+      'medecinId',
+      'medecin',
+    );
+    return this.attachPatient(withMedecin);
   }
 
   async createSalle(data: any) {
@@ -1448,16 +1486,20 @@ export class AppService {
    * par l'archive et le rapport, au lieu de le redéduire à chaque affichage.
    */
   private async markTermineIfComplete(prescriptionId: string) {
-    const prescription = await this.prisma.prescription.findUnique({
+    const prescriptionRaw = await this.prisma.prescription.findUnique({
       where: { id: prescriptionId },
       include: {
         checklistApres: true,
         resultatEndoscopie: true,
         rendezVous: true,
-        medecinPrescripteur: true,
       },
     });
-    if (!prescription) return;
+    if (!prescriptionRaw) return;
+    const prescription = await this.medecinsService.attachMedecin(
+      prescriptionRaw,
+      'medecinId',
+      'medecinPrescripteur',
+    );
     if (!prescription.checklistApres?.estValide || !prescription.resultatEndoscopie) return;
     if (prescription.statut === 'Terminé') return;
 
@@ -1587,16 +1629,17 @@ export class AppService {
   async getResultatByPublicToken(token: string) {
     const resultat = await this.prisma.resultatEndoscopie.findUnique({
       where: { publicToken: token },
-      include: {
-        prescription: {
-          include: {
-            medecinPrescripteur: true,
-          },
-        },
-      },
+      include: { prescription: true },
     });
     if (!resultat) throw new NotFoundException('Résultat non trouvé');
-    return resultat;
+    if (!resultat.prescription) return resultat;
+
+    const prescriptionAvecMedecin = await this.medecinsService.attachMedecin(
+      resultat.prescription,
+      'medecinId',
+      'medecinPrescripteur',
+    );
+    return { ...resultat, prescription: prescriptionAvecMedecin };
   }
 
   async revokePublicShareLink(prescriptionId: string) {
@@ -1705,28 +1748,36 @@ export class AppService {
     const prescriptions = await this.prisma.prescription.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        medecinPrescripteur: true,
         rendezVous: true,
         dossierCPA: true,
       },
       orderBy: { dateDemande: 'desc' },
     });
-    return this.attachPatients(prescriptions);
+    const withMedecin = await this.medecinsService.attachMedecins(
+      prescriptions,
+      'medecinId',
+      'medecinPrescripteur',
+    );
+    return this.attachPatients(withMedecin);
   }
 
   async getConfirmationPlanification(prescriptionId: string, serviceIdOverride?: string) {
-    const prescription = await this.prisma.prescription.findFirst({
+    const prescriptionRaw = await this.prisma.prescription.findFirst({
       where: { id: prescriptionId, ...this.scope(serviceIdOverride) },
       include: {
-        medecinPrescripteur: true,
         rendezVous: true,
         dossierCPA: true,
       },
     });
 
-    if (!prescription) {
+    if (!prescriptionRaw) {
       throw new NotFoundException(`Confirmation pour prescription ${prescriptionId} introuvable`);
     }
+    const prescription = await this.medecinsService.attachMedecin(
+      prescriptionRaw,
+      'medecinId',
+      'medecinPrescripteur',
+    );
 
     const accueilPatient = await this.getAccueilPatient(prescription.patientId);
     const patient = accueilPatient ? this.toPatientView(accueilPatient) : null;

@@ -24,6 +24,7 @@ import {
 } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExternalApiService } from '../services/external-api.service';
+import { MedecinsService } from '../services/medecins.service';
 import {
   ResultatExamenExterneDto,
   CreateServiceExterneDto,
@@ -37,6 +38,7 @@ export class ExternalApiController {
   constructor(
     private prisma: PrismaService,
     private externalApiService: ExternalApiService,
+    private medecinsService: MedecinsService,
   ) {}
 
   /**
@@ -75,7 +77,6 @@ export class ExternalApiController {
       where: { id: prescriptionId },
       include: {
         resultatEndoscopie: true,
-        medecinPrescripteur: true,
       },
     });
 
@@ -83,6 +84,12 @@ export class ExternalApiController {
       await this.externalApiService.logAccess(service.id, prescriptionId, 'UNKNOWN', 404);
       throw new NotFoundException(`Prescription ${prescriptionId} introuvable`);
     }
+
+    const medecinPrescripteur = prescription.medecinId
+      ? (await this.medecinsService.getEndoscopieMedecins()).find(
+          (m) => m.id === prescription.medecinId,
+        ) ?? null
+      : null;
 
     // Vérifier que le résultat est disponible
     if (!prescription.resultatEndoscopie) {
@@ -110,7 +117,9 @@ export class ExternalApiController {
       resultats: this.parseResultats(prescription.resultatEndoscopie.details || '{}'),
       conclusion: prescription.resultatEndoscopie.conclusion || undefined,
       recommandation: prescription.resultatEndoscopie.followUp || undefined,
-      medecin: prescription.medecinPrescripteur?.nom + ' ' + prescription.medecinPrescripteur?.prenom,
+      medecin: medecinPrescripteur
+        ? `${medecinPrescripteur.nom} ${medecinPrescripteur.prenom}`
+        : 'N/A',
       dateResultat: prescription.resultatEndoscopie.dateCreation.toISOString(),
     };
   }

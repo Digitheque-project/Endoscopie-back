@@ -104,6 +104,14 @@ export class AppController {
     return this.appService.getPrescriptions(serviceId);
   }
 
+  // ——— Médecins ———
+  @Get('api/medecins')
+  @ApiTags('Médecins')
+  @ApiOperation({ summary: 'Lister tous les médecins d\'Endoscopie (en direct depuis le service auth/utilisateurs centralisé)' })
+  async getMedecins() {
+    return this.appService.getMedecins();
+  }
+
   // ——— Types d'examen ———
   @Get('api/exam-types')
   @ApiTags('Configuration')

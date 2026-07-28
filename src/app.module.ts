@@ -1,12 +1,14 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { RolesGuard } from './auth/roles.guard';
+import { RequestContextMiddleware } from './auth/request-context';
 import { NotificationModule } from './notification/notification.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ExternalApiModule } from './external-api/external-api.module';
 import { ServiceSourceModule } from './service-source/service-source.module';
+import { MedecinsModule } from './services/medecins.module';
 
 @Module({
   imports: [
@@ -14,8 +16,13 @@ import { ServiceSourceModule } from './service-source/service-source.module';
     NotificationModule,
     ExternalApiModule,
     ServiceSourceModule,
+    MedecinsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: RolesGuard }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer.apply(RequestContextMiddleware).forRoutes('*');
+  }
+}

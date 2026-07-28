@@ -52,6 +52,11 @@ services:
         sync: false
       - key: CHU_SERVICE_ACCOUNT_PASSWORD
         sync: false
+      # Service utilisateurs de l'écosystème d'authentification CHU — liste des médecins
+      # (voir src/services/medecins.service.ts). Distinct de CHU_AUTH_LOGIN_URL : le login
+      # passe par la gateway, la lecture des utilisateurs interroge ce service directement.
+      - key: AUTH_USER_SERVICE_URL
+        value: https://user-services-1sm6.onrender.com
       - key: DOSSIER_PATIENT_API_URL
         value: https://dossier-patient-back-ri3e.onrender.com/dossier-patient
       # URL Render du front une fois déployé — nécessaire pour le CORS
