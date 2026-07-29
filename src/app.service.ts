@@ -4,6 +4,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
@@ -16,6 +18,7 @@ import {
   getEndoscopieServiceId,
   getEndoscopieAuthChuId,
   getEndoscopieAuthServiceId,
+  getPrescriptionExtApiUrl,
 } from './config/endoscopie-service';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
@@ -27,6 +30,7 @@ import { NotificationInboxService } from './notification/notification-inbox.serv
 import { ServiceSourceService } from './services/service-source.service';
 import { MedecinsService } from './services/medecins.service';
 import { CpaBlocService } from './services/cpa-bloc.service';
+import { getCurrentUserToken } from './auth/request-context';
 
 interface AccueilPatientRaw {
   id: string;
@@ -42,10 +46,77 @@ interface AccueilPatientRaw {
   priseEnChargeId?: string | null;
 }
 
+/**
+ * Une prescription externe d'endoscopie peut regrouper PLUSIEURS demandes d'examen (ex:
+ * Coloscopie + Fibroscopie sur une même prescription venant d'un autre service). Chaque
+ * demande a son propre statut, mis à jour individuellement côté service externe.
+ */
+interface ExternalEndoscopieDemande {
+  id: string;
+  prescriptionId: string;
+  typeExamen: string;
+  autreExamen?: string | null;
+  statut?: string | null;
+  motifRefus?: string | null;
+  createdAt?: string | null;
+}
+
+interface ExternalEndoscopiePrescription {
+  id: string;
+  patientId: string;
+  prescripteurId: string;
+  renseignements?: string | null;
+  urgence?: 'NORMAL' | 'URGENT' | 'TRES_URGENT' | null;
+  alertes?: string | null;
+  remarques?: string | null;
+  chuId?: string | null;
+  serviceIdSource?: string | null;
+  serviceIdDest?: string | null;
+  createdAt?: string | null;
+  demandes?: ExternalEndoscopieDemande[];
+  // Rétrocompatibilité : certaines réponses peuvent renvoyer un examen unique à plat,
+  // sans tableau `demandes`.
+  typeExamen?: string | null;
+  statut?: string | null;
+}
+
+/**
+ * Une "demande" aplatie, prête à être traitée comme une prescription unique (un examen =
+ * une prescription = un rendez-vous = un compte-rendu). Chaque demande d'une prescription
+ * à examens multiples devient un élément distinct de cette liste, avec demande.id comme
+ * identifiant externe.
+ */
+type FlatExternalDemande = {
+  id: string;
+  patientId: string;
+  prescripteurId: string;
+  typeExamen: string;
+  renseignements?: string | null;
+  urgence?: string | null;
+  alertes?: string | null;
+  remarques?: string | null;
+  chuId?: string | null;
+  serviceIdSource?: string | null;
+  serviceIdDest?: string | null;
+  createdAt?: string | null;
+  statut?: string | null;
+  /** ID de la prescription externe parente (regroupe les demandes multiples). */
+  prescriptionExternalId: string;
+};
+
 @Injectable()
-export class AppService {
+export class AppService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AppService.name);
   private accueilCache: { patients: AccueilPatientRaw[]; expiresAt: number } | null = null;
+
+  /** IDs de demandes externes déjà vus — en mémoire uniquement, jamais persisté — pour ne
+   *  notifier que les VRAIES nouvelles arrivées. Le service prescription externe n'expose
+   *  aucun webhook pour nous prévenir lui-même (vérifié sur son Swagger) : le polling reste
+   *  le seul moyen de détecter une nouvelle prescription. */
+  private seenExternalPrescriptionIds: Set<string> | null = null;
+  private prescriptionWatcherInterval: ReturnType<typeof setInterval> | null = null;
+  private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 3000;
+  private isPollingPrescriptions = false;
 
   constructor(
     private prisma: PrismaService,
@@ -55,6 +126,206 @@ export class AppService {
     private medecinsService: MedecinsService,
     private cpaBlocService: CpaBlocService,
   ) {}
+
+  async onModuleInit() {
+    // Amorce la liste des demandes déjà connues au démarrage, pour ne notifier que les
+    // VRAIES nouvelles arrivées et éviter une salve de notifications pour tout ce qui
+    // existait déjà avant le lancement du serveur.
+    try {
+      const existing = await this.fetchExternalPrescriptions();
+      this.seenExternalPrescriptionIds = new Set(existing.map((p) => p.id).filter(Boolean));
+    } catch (e) {
+      this.seenExternalPrescriptionIds = new Set();
+      this.logger.warn(`Amorçage du watcher de prescriptions échoué: ${e instanceof Error ? e.message : e}`);
+    }
+
+    this.prescriptionWatcherInterval = setInterval(
+      () => this.pollForNewPrescriptions(),
+      this.PRESCRIPTION_WATCH_INTERVAL_MS,
+    );
+  }
+
+  onModuleDestroy() {
+    if (this.prescriptionWatcherInterval) clearInterval(this.prescriptionWatcherInterval);
+  }
+
+  /**
+   * Détecte les nouvelles prescriptions arrivées depuis le service externe et déclenche
+   * une notification. Construit le contenu directement à partir des champs externes (+
+   * résolution patient/médecin en direct) — n'appelle jamais getPrescriptionById, pour ne
+   * créer aucune ligne locale tant que personne n'a réellement ouvert le dossier.
+   */
+  private async pollForNewPrescriptions() {
+    if (!this.seenExternalPrescriptionIds) return;
+    if (this.isPollingPrescriptions) return;
+    this.isPollingPrescriptions = true;
+    try {
+      const current = await this.fetchExternalPrescriptions();
+      const nouvelles = current.filter((p) => p.id && !this.seenExternalPrescriptionIds!.has(p.id));
+      if (nouvelles.length === 0) return;
+
+      const groups = new Map<string, typeof nouvelles>();
+      for (const demande of nouvelles) {
+        const key = demande.prescriptionExternalId || demande.id;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(demande);
+      }
+
+      for (const demandes of groups.values()) {
+        for (const demande of demandes) {
+          this.seenExternalPrescriptionIds.add(demande.id);
+        }
+        try {
+          const withMedecin = await this.medecinsService.attachMedecins(
+            demandes,
+            'prescripteurId',
+            'medecinPrescripteur',
+          );
+          const resolvedList = await this.attachPatients(withMedecin);
+          await this.notificationService.notifyPrescriptionCreated(
+            resolvedList.map((d) => ({
+              id: d.id,
+              patientId: d.patientId,
+              typeExamen: d.typeExamen,
+              motif: d.renseignements || d.remarques || null,
+              patient: d.patient,
+              medecinPrescripteur: d.medecinPrescripteur,
+            })),
+          );
+        } catch (e) {
+          this.logger.warn(
+            `Notification échouée pour la nouvelle prescription ${demandes[0]?.id}: ${e instanceof Error ? e.message : e}`,
+          );
+        }
+      }
+    } catch (e) {
+      this.logger.warn(`Vérification des nouvelles prescriptions échouée: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      this.isPollingPrescriptions = false;
+    }
+  }
+
+  /** Interroge le service prescription externe pour une paire serviceId/chuId donnée. */
+  private async fetchExternalPrescriptionsFor(
+    serviceId: string,
+    chuId: string,
+  ): Promise<ExternalEndoscopiePrescription[]> {
+    try {
+      const url = `${getPrescriptionExtApiUrl()}/endoscopie?serviceIdDest=${serviceId}&chuId=${chuId}`;
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) return [];
+      const data = (await res.json()) as unknown;
+      return Array.isArray(data) ? (data as ExternalEndoscopiePrescription[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Récupère les prescriptions brutes d'endoscopie depuis le service externe. Interroge
+   * toutes les combinaisons de nos ID service/CHU locaux et ceux de l'écosystème
+   * d'authentification — en pratique, le service prescription tague ses prescriptions
+   * avec des paires "mixtes", pas seulement les deux paires "propres".
+   */
+  private async fetchExternalPrescriptionsRaw(
+    serviceIdOverride?: string,
+  ): Promise<ExternalEndoscopiePrescription[]> {
+    const primaryServiceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const primaryChuId = getEndoscopieChuId();
+    const authServiceId = getEndoscopieAuthServiceId();
+    const authChuId = getEndoscopieAuthChuId();
+
+    const serviceIds = [...new Set([primaryServiceId, authServiceId].filter((v): v is string => Boolean(v)))];
+    const chuIds = [...new Set([primaryChuId, authChuId].filter((v): v is string => Boolean(v)))];
+    const pairs = serviceIds.flatMap((s) => chuIds.map((c) => [s, c] as const));
+
+    const results = await Promise.all(pairs.map(([s, c]) => this.fetchExternalPrescriptionsFor(s, c)));
+    const byId = new Map<string, ExternalEndoscopiePrescription>();
+    for (const list of results) {
+      for (const p of list) byId.set(p.id, p);
+    }
+    return [...byId.values()];
+  }
+
+  /**
+   * Éclate chaque prescription externe en une liste plate de demandes — une prescription
+   * à examens multiples (ex: Coloscopie + Fibroscopie) devient autant d'éléments distincts,
+   * chacun traité comme une prescription unique.
+   */
+  private flattenExternalPrescriptions(
+    prescriptions: ExternalEndoscopiePrescription[],
+  ): FlatExternalDemande[] {
+    const flat: FlatExternalDemande[] = [];
+    for (const p of prescriptions) {
+      if (p.demandes && p.demandes.length > 0) {
+        for (const d of p.demandes) {
+          flat.push({
+            id: d.id,
+            patientId: p.patientId,
+            prescripteurId: p.prescripteurId,
+            typeExamen: d.typeExamen || d.autreExamen || 'Endoscopie',
+            renseignements: p.renseignements,
+            urgence: p.urgence,
+            alertes: p.alertes,
+            remarques: p.remarques,
+            chuId: p.chuId,
+            serviceIdSource: p.serviceIdSource,
+            serviceIdDest: p.serviceIdDest,
+            createdAt: d.createdAt || p.createdAt,
+            statut: d.statut,
+            prescriptionExternalId: p.id,
+          });
+        }
+      } else if (p.typeExamen) {
+        flat.push({
+          id: p.id,
+          patientId: p.patientId,
+          prescripteurId: p.prescripteurId,
+          typeExamen: p.typeExamen,
+          renseignements: p.renseignements,
+          urgence: p.urgence,
+          alertes: p.alertes,
+          remarques: p.remarques,
+          chuId: p.chuId,
+          serviceIdSource: p.serviceIdSource,
+          serviceIdDest: p.serviceIdDest,
+          createdAt: p.createdAt,
+          statut: p.statut,
+          prescriptionExternalId: p.id,
+        });
+      }
+    }
+    return flat;
+  }
+
+  /** Récupère les demandes d'endoscopie externes, aplaties (une demande = une prescription). */
+  private async fetchExternalPrescriptions(serviceIdOverride?: string): Promise<FlatExternalDemande[]> {
+    const raw = await this.fetchExternalPrescriptionsRaw(serviceIdOverride);
+    return this.flattenExternalPrescriptions(raw);
+  }
+
+  /** Mappe l'urgence externe (NORMAL/URGENT/TRES_URGENT) vers la priorité locale. */
+  private mapUrgenceToPriorite(urgence?: string | null): string {
+    const u = urgence?.trim().toUpperCase();
+    if (u === 'STAT' || u === 'TRES_URGENT') return 'STAT';
+    if (u === 'URGENTE' || u === 'URGENT') return 'Urgent';
+    return 'Standard';
+  }
+
+  /** Mappe le statut externe (ex: "CREEE") vers le statut local ("A planifier"). */
+  private mapExternalStatut(statut?: string | null): string {
+    const s = (statut || '').toUpperCase();
+    if (s === 'CREEE' || s === 'CREATED') return 'A planifier';
+    if (s === 'EN_COURS' || s === 'IN_PROGRESS') return 'Planifié';
+    if (s === 'COMPLETEE' || s === 'COMPLETED' || s === 'TERMINEE') return 'Confirmé';
+    if (s === 'ANNULEE' || s === 'CANCELLED') return 'Annulé';
+    if (['A planifier', 'Planifié', 'Décision rendue', 'Confirmé', 'CPA demandée'].includes(statut || '')) return statut!;
+    return 'A planifier';
+  }
 
 
 
@@ -430,18 +701,54 @@ export class AppService {
     });
   }
 
+  /**
+   * Liste en direct depuis le service prescription externe (source de vérité — voir
+   * Prescription.externalId dans schema.prisma) : aucune écriture ici, uniquement une
+   * fusion en mémoire avec l'état de workflow local déjà existant (rendez-vous,
+   * checklists, résultat...) pour les prescriptions déjà ouvertes au moins une fois. Les
+   * champs propres à la prescription (patient, médecin, motif, type d'examen, urgence)
+   * viennent toujours de la réponse externe, jamais d'une copie locale — le service
+   * externe reste seul responsable de ses propres données.
+   */
   async getPrescriptions(serviceIdOverride?: string) {
-    const prescriptions = await this.prisma.prescription.findMany({
-      where: this.scope(serviceIdOverride),
-      include: {
-        rendezVous: true,
-        checklistApres: true,
-        dossierCPA: true,
-      },
-      orderBy: { dateDemande: 'desc' },
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const external = await this.fetchExternalPrescriptions(serviceIdOverride);
+    const externalIds = external.map((e) => e.id);
+
+    const localRecords = externalIds.length
+      ? await this.prisma.prescription.findMany({
+          where: { externalId: { in: externalIds } },
+          include: { rendezVous: true, checklistApres: true, dossierCPA: true },
+        })
+      : [];
+    const localByExtId = new Map(
+      localRecords.filter((r) => r.externalId).map((r) => [r.externalId as string, r]),
+    );
+
+    const rows = external.map((ext) => {
+      const local = localByExtId.get(ext.id);
+      return {
+        id: local?.id ?? ext.id,
+        externalId: ext.id,
+        prescriptionExternalId: ext.prescriptionExternalId ?? null,
+        patientId: ext.patientId,
+        medecinId: ext.prescripteurId ?? null,
+        typeExamen: ext.typeExamen || 'Endoscopie',
+        motif: ext.renseignements || ext.remarques || '',
+        priorite: this.mapUrgenceToPriorite(ext.urgence),
+        // Le statut est un état de workflow qui nous appartient une fois la prescription
+        // ouverte localement — sinon, valeur de départ dérivée du statut externe.
+        statut: local?.statut ?? this.mapExternalStatut(ext.statut),
+        dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
+        serviceId,
+        rendezVous: local?.rendezVous ?? null,
+        checklistApres: local?.checklistApres ?? null,
+        dossierCPA: local?.dossierCPA ?? null,
+      };
     });
+
     const withMedecin = await this.medecinsService.attachMedecins(
-      prescriptions,
+      rows,
       'medecinId',
       'medecinPrescripteur',
     );
@@ -449,23 +756,68 @@ export class AppService {
   }
 
   async getPrescriptionById(id: string, serviceIdOverride?: string) {
-    const prescription = await this.prisma.prescription.findFirst({
-      where: { id, ...this.scope(serviceIdOverride) },
-      include: {
-        rendezVous: true,
-        checklistAvant: true,
-        checklistApres: true,
-        dossierCPA: true,
-        resultatEndoscopie: true,
-        operationEndoscopie: true,
-        notes: true,
-      },
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const include = {
+      rendezVous: true,
+      checklistAvant: true,
+      checklistApres: true,
+      dossierCPA: true,
+      resultatEndoscopie: true,
+      operationEndoscopie: true,
+      notes: true,
+    } as const;
+
+    // Cherche par ID local OU par externalId — un lien direct vers un dossier déjà
+    // travaillé peut arriver avec l'un ou l'autre selon l'endroit d'où il vient.
+    let prescription = await this.prisma.prescription.findFirst({
+      where: { OR: [{ id }, { externalId: id }] },
+      include,
     });
-    if (!prescription) {
-      throw new NotFoundException(`Prescription ${id} introuvable`);
+    if (prescription && prescription.serviceId !== serviceId) {
+      prescription = await this.prisma.prescription.update({
+        where: { id: prescription.id },
+        data: { serviceId },
+        include,
+      });
     }
+
+    const external = await this.fetchExternalPrescriptions(serviceIdOverride);
+    const ext = external.find((e) => e.id === (prescription?.externalId ?? id));
+
+    if (!prescription) {
+      if (!ext) throw new NotFoundException(`Prescription ${id} introuvable`);
+      // Pas encore de dossier local pour cette prescription externe : on crée une ligne
+      // minimale, uniquement pour servir d'ancrage à NOS propres données (rendez-vous,
+      // checklists, compte-rendu). Elle n'est jamais resynchronisée ensuite — voir
+      // fusion `ext` ci-dessous, qui prévaut toujours pour l'affichage tant que `ext`
+      // est disponible.
+      prescription = await this.prisma.prescription.create({
+        data: {
+          externalId: ext.id,
+          prescriptionExternalId: ext.prescriptionExternalId ?? null,
+          serviceId,
+          patientId: ext.patientId,
+          medecinId: ext.prescripteurId ?? '',
+        },
+        include,
+      });
+    }
+
+    const merged = ext
+      ? {
+          ...prescription,
+          prescriptionExternalId: ext.prescriptionExternalId ?? prescription.prescriptionExternalId,
+          patientId: ext.patientId,
+          medecinId: ext.prescripteurId ?? prescription.medecinId,
+          typeExamen: ext.typeExamen || 'Endoscopie',
+          motif: ext.renseignements || ext.remarques || '',
+          priorite: this.mapUrgenceToPriorite(ext.urgence),
+          dateDemande: ext.createdAt ? new Date(ext.createdAt) : prescription.dateDemande,
+        }
+      : prescription;
+
     const withMedecin = await this.medecinsService.attachMedecin(
-      prescription,
+      merged,
       'medecinId',
       'medecinPrescripteur',
     );

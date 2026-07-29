@@ -44,7 +44,7 @@ export class MedecinsService {
    * données médecins elles-mêmes, qui restent interrogées en direct à chaque appel (voir
    * getEndoscopieMedecins ci-dessous).
    */
-  private async getServiceAccountToken(): Promise<string | null> {
+  async getServiceAccountToken(): Promise<string | null> {
     const loginUrl = getAuthEcosystemLoginUrl();
     const credentials = getServiceAccountCredentials();
     if (!loginUrl || !credentials) return null;
