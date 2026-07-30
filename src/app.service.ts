@@ -755,8 +755,60 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     return this.attachPatients(withMedecin);
   }
 
-  async getPrescriptionById(id: string, serviceIdOverride?: string) {
+  /**
+   * Garantit qu'une ligne locale (ancrage minimal) existe pour cette prescription — id
+   * local, externalId, ou id brut externe jamais encore ouvert — en la créant à la volée
+   * si besoin. Réutilisé par getPrescriptionById et par tout point d'écriture (rendez-vous
+   * notamment) qui a besoin d'un id local valide pour respecter la contrainte de clé
+   * étrangère, même si le dossier n'a jamais été ouvert au préalable — sans quoi Prisma
+   * lève une erreur de clé étrangère (P2003) en essayant de créer un enregistrement lié
+   * à un id qui n'existe pas encore localement.
+   */
+  private async ensurePrescriptionAnchor(
+    id: string,
+    serviceIdOverride?: string,
+  ): Promise<{
+    prescription: { id: string; externalId: string | null; serviceId: string };
+    ext: FlatExternalDemande | null;
+  }> {
     const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+
+    // Cherche par ID local OU par externalId — un lien direct vers un dossier déjà
+    // travaillé peut arriver avec l'un ou l'autre selon l'endroit d'où il vient.
+    let prescription = await this.prisma.prescription.findFirst({
+      where: { OR: [{ id }, { externalId: id }] },
+    });
+    if (prescription && prescription.serviceId !== serviceId) {
+      prescription = await this.prisma.prescription.update({
+        where: { id: prescription.id },
+        data: { serviceId },
+      });
+    }
+
+    const external = await this.fetchExternalPrescriptions(serviceIdOverride);
+    const ext = external.find((e) => e.id === (prescription?.externalId ?? id)) ?? null;
+
+    if (!prescription) {
+      if (!ext) throw new NotFoundException(`Prescription ${id} introuvable`);
+      // Pas encore de dossier local pour cette prescription externe : on crée une ligne
+      // minimale, uniquement pour servir d'ancrage à NOS propres données (rendez-vous,
+      // checklists, compte-rendu). Elle n'est jamais resynchronisée ensuite — l'affichage
+      // continue de préférer les données externes tant qu'elles sont disponibles.
+      prescription = await this.prisma.prescription.create({
+        data: {
+          externalId: ext.id,
+          prescriptionExternalId: ext.prescriptionExternalId ?? null,
+          serviceId,
+          patientId: ext.patientId,
+          medecinId: ext.prescripteurId ?? '',
+        },
+      });
+    }
+
+    return { prescription, ext };
+  }
+
+  async getPrescriptionById(id: string, serviceIdOverride?: string) {
     const include = {
       rendezVous: true,
       checklistAvant: true,
@@ -767,41 +819,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       notes: true,
     } as const;
 
-    // Cherche par ID local OU par externalId — un lien direct vers un dossier déjà
-    // travaillé peut arriver avec l'un ou l'autre selon l'endroit d'où il vient.
-    let prescription = await this.prisma.prescription.findFirst({
-      where: { OR: [{ id }, { externalId: id }] },
+    const { prescription: anchor, ext } = await this.ensurePrescriptionAnchor(id, serviceIdOverride);
+    const prescription = await this.prisma.prescription.findUniqueOrThrow({
+      where: { id: anchor.id },
       include,
     });
-    if (prescription && prescription.serviceId !== serviceId) {
-      prescription = await this.prisma.prescription.update({
-        where: { id: prescription.id },
-        data: { serviceId },
-        include,
-      });
-    }
-
-    const external = await this.fetchExternalPrescriptions(serviceIdOverride);
-    const ext = external.find((e) => e.id === (prescription?.externalId ?? id));
-
-    if (!prescription) {
-      if (!ext) throw new NotFoundException(`Prescription ${id} introuvable`);
-      // Pas encore de dossier local pour cette prescription externe : on crée une ligne
-      // minimale, uniquement pour servir d'ancrage à NOS propres données (rendez-vous,
-      // checklists, compte-rendu). Elle n'est jamais resynchronisée ensuite — voir
-      // fusion `ext` ci-dessous, qui prévaut toujours pour l'affichage tant que `ext`
-      // est disponible.
-      prescription = await this.prisma.prescription.create({
-        data: {
-          externalId: ext.id,
-          prescriptionExternalId: ext.prescriptionExternalId ?? null,
-          serviceId,
-          patientId: ext.patientId,
-          medecinId: ext.prescripteurId ?? '',
-        },
-        include,
-      });
-    }
 
     const merged = ext
       ? {
@@ -1370,7 +1392,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const resolvedPrescriptionId = data.prescriptionId ?? null;
+    // Résout (et crée si besoin) l'ancrage local — le patient a pu cliquer "Planifier"
+    // directement depuis le Fil de prescription sans jamais ouvrir le détail du dossier,
+    // auquel cas prescriptionId reçu ici est encore l'id brut externe, pas un id local.
+    const resolvedPrescriptionId = data.prescriptionId
+      ? (await this.ensurePrescriptionAnchor(data.prescriptionId, data.serviceId)).prescription.id
+      : null;
 
     const rendezVousPayload = {
       serviceId,
