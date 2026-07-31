@@ -788,6 +788,16 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const external = await this.fetchExternalPrescriptions(serviceIdOverride);
     const ext = external.find((e) => e.id === (prescription?.externalId ?? id)) ?? null;
 
+    // Auto-réparation : une ligne ancrée avant que typeExamen soit renseigné à la
+    // création (voir plus bas) est restée sur le générique "Endoscopie" — on la
+    // corrige dès qu'on repasse par ici et que la vraie valeur externe est connue.
+    if (prescription && ext?.typeExamen && prescription.typeExamen === 'Endoscopie' && ext.typeExamen !== 'Endoscopie') {
+      prescription = await this.prisma.prescription.update({
+        where: { id: prescription.id },
+        data: { typeExamen: ext.typeExamen },
+      });
+    }
+
     if (!prescription) {
       if (!ext) throw new NotFoundException(`Prescription ${id} introuvable`);
       // Pas encore de dossier local pour cette prescription externe : on crée une ligne
@@ -801,6 +811,17 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           serviceId,
           patientId: ext.patientId,
           medecinId: ext.prescripteurId ?? '',
+          // Snapshot pris une seule fois, à la création — jamais resynchronisé ensuite. Les
+          // endpoints qui relisent la prescription en direct (getPrescriptions,
+          // getPrescriptionById) continuent de préférer les données externes ; mais
+          // d'autres (getRendezVous, getDossiersCpa...) font un simple include Prisma sur
+          // cette colonne locale, donc la laisser sur son défaut générique "Endoscopie"
+          // (voir schema.prisma) y affichait un type d'examen faux pour toute prescription
+          // ancrée via une planification plutôt qu'une ouverture de dossier.
+          typeExamen: ext.typeExamen || 'Endoscopie',
+          motif: ext.renseignements || ext.remarques || '',
+          priorite: this.mapUrgenceToPriorite(ext.urgence),
+          dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
         },
       });
     }
