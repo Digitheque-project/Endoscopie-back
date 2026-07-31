@@ -899,6 +899,33 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   async createDossierCpa(data: CreateDossierCpaDto) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
+
+    // Un dossier CPA existe déjà pour cette prescription (ex. tentative précédente dont
+    // l'envoi au Bloc a échoué/été bloqué) : prescriptionId est unique, une recréation
+    // échouerait. On retente simplement l'envoi au Bloc pour ce dossier existant plutôt
+    // que de renvoyer une erreur de contrainte peu explicite.
+    if (data.prescriptionId) {
+      const existing = await this.prisma.dossierCPA.findUnique({
+        where: { prescriptionId: data.prescriptionId },
+        include: { prescription: true },
+      });
+      if (existing) {
+        if (!existing.blocDemandeId) {
+          this.notifyBlocCpa(existing, data).catch((e) => {
+            this.logger.warn(
+              `Envoi demande CPA au Bloc échoué pour le dossier ${existing.id}: ${e instanceof Error ? e.message : e}`,
+            );
+          });
+        }
+        const withMedecin = await this.medecinsService.attachMedecin(
+          existing,
+          'anesthesisteId',
+          'anesthesiste',
+        );
+        return this.attachPatient(withMedecin);
+      }
+    }
+
     const dossier = await this.prisma.dossierCPA.create({
       data: {
         serviceId,
@@ -951,9 +978,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // N'envoyer que pour les patients Accueil (format CHU-YYYY-NNNNN)
+    // Le Bloc demande "le même identifiant que celui utilisé par le service Accueil"
+    // (voir son Swagger, ReceiveDemandeCpaDto.patientId) — sans exiger le format
+    // CHU-YYYY-NNNNN. Accueil attribue parfois un UUID brut plutôt qu'un code
+    // CHU-YYYY-NNNNN à certains patients (confirmé le 31/07/2026) ; un ancien filtre
+    // ici ne laissait passer que le format CHU-YYYY-NNNNN et bloquait donc en
+    // silence des patients pourtant valides. On se contente de vérifier qu'un
+    // patientId existe.
     const patientId = dossier.patientId ?? '';
-    if (!/^CHU-\d{4}-\d+$/.test(patientId)) return;
+    if (!patientId) return;
 
     let dateExamenSouhaitee: string | null = null;
     if (data.prescriptionId) {
