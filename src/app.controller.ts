@@ -198,6 +198,20 @@ export class AppController {
     return this.appService.getDossierCpaById(id);
   }
 
+  @Post('api/dossiers-cpa/:id/renvoyer-bloc')
+  @Roles('MAJOR')
+  @ApiTags('Dossiers CPA')
+  @ApiOperation({
+    summary: '[POST] Renvoyer manuellement une demande CPA au Bloc Opératoire',
+    description:
+      "À utiliser quand la demande n'a jamais été reçue par le Bloc (blocDemandeId absent) — " +
+      "contrairement à l'envoi automatique à la création, celui-ci est synchrone et renvoie une erreur explicite en cas d'échec.",
+  })
+  @ApiParam({ name: 'id', description: 'UUID du dossier CPA' })
+  async renvoyerDossierCpaAuBloc(@Param('id') id: string) {
+    return this.appService.renvoyerDossierCpaAuBloc(id);
+  }
+
   @Get('api/dossiers-cpa/:id/verifier-statut')
   @ApiTags('Dossiers CPA')
   @ApiOperation({

@@ -1016,15 +1016,41 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       body: JSON.stringify(payload),
     });
 
-    if (res.ok) {
-      const json = await res.json() as { id?: string };
-      if (json.id) {
-        await this.prisma.dossierCPA.update({
-          where: { id: dossier.id },
-          data: { blocDemandeId: json.id },
-        });
-      }
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Le Bloc a répondu ${res.status}${body ? ` : ${body}` : ''}`);
     }
+
+    const json = await res.json() as { id?: string };
+    if (json.id) {
+      await this.prisma.dossierCPA.update({
+        where: { id: dossier.id },
+        data: { blocDemandeId: json.id },
+      });
+    }
+  }
+
+  /**
+   * Renvoi manuel d'une demande CPA au Bloc Opératoire depuis l'interface — contrairement
+   * à l'envoi fire-and-forget fait à la création du dossier, celui-ci est synchrone et
+   * remonte une erreur explicite si ça échoue, pour que le major puisse le voir et
+   * réessayer, plutôt qu'un échec silencieux dans les logs serveur.
+   */
+  async renvoyerDossierCpaAuBloc(id: string, serviceIdOverride?: string) {
+    const dossier = await this.getDossierCpaById(id, serviceIdOverride);
+    if (dossier.blocDemandeId) {
+      return { success: true, dejaEnvoye: true, blocDemandeId: dossier.blocDemandeId };
+    }
+
+    await this.notifyBlocCpa(dossier, { prescriptionId: dossier.prescriptionId ?? undefined } as CreateDossierCpaDto);
+
+    const updated = await this.prisma.dossierCPA.findUnique({ where: { id } });
+    if (!updated?.blocDemandeId) {
+      throw new BadRequestException(
+        "Le Bloc Opératoire n'a pas confirmé la réception de la demande.",
+      );
+    }
+    return { success: true, dejaEnvoye: false, blocDemandeId: updated.blocDemandeId };
   }
 
   /**
