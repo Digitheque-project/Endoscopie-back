@@ -4,9 +4,10 @@ import { MessageEvent } from '@nestjs/common';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
-import { InboxNotification } from './notification-inbox.types';
+import { InboxNotification, InboxNotificationView } from './notification-inbox.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CpaBlocService } from '../services/cpa-bloc.service';
+import { AppRole } from '../auth/roles.types';
 
 /** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
 const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
@@ -116,15 +117,23 @@ export class NotificationInboxService {
     this.logger.log(`Notification [${dto.type}] appliquée au dossier ${dossierId}`);
   }
 
-  listInbox(limit = 50): InboxNotification[] {
-    return this.items.slice(0, Math.min(limit, MAX_INBOX));
+  /** Vue d'un item scopée à un rôle — readAt ne reflète que ce que CE rôle a lu. */
+  private toRoleView(item: InboxNotification, role?: AppRole): InboxNotificationView {
+    const { readByRole, ...rest } = item;
+    return { ...rest, readAt: (role && readByRole[role]) ?? null };
   }
 
-  markRead(id: string): InboxNotification | null {
+  listInbox(limit = 50, role?: AppRole): InboxNotificationView[] {
+    return this.items
+      .slice(0, Math.min(limit, MAX_INBOX))
+      .map((item) => this.toRoleView(item, role));
+  }
+
+  markRead(id: string, role?: AppRole): InboxNotificationView | null {
     const item = this.items.find((n) => n.id === id);
     if (!item) return null;
-    item.readAt = new Date().toISOString();
-    return item;
+    if (role) item.readByRole[role] = new Date().toISOString();
+    return this.toRoleView(item, role);
   }
 
   stream(): Observable<MessageEvent> {
@@ -165,7 +174,7 @@ export class NotificationInboxService {
       entiteRefId: dto.entiteRefId,
       payload: dto.payload,
       receivedAt: new Date().toISOString(),
-      readAt: null,
+      readByRole: {},
     };
   }
 }
