@@ -1704,7 +1704,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
     // Reflète l'étape de la décision d'anesthésie sur la prescription elle-même,
     // pour qu'elle réapparaisse au bon statut dans le Fil de prescription du Major.
-    const CASCADE_STATUTS = ['Décision rendue', 'Confirmé'];
+    // 'Annulé' couvre le refus d'un examen par le médecin (bouton "Refuser").
+    const CASCADE_STATUTS = ['Décision rendue', 'Confirmé', 'Annulé'];
     if (
       existing.prescriptionId &&
       data.statut !== undefined &&
