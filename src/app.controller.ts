@@ -116,6 +116,24 @@ export class AppController {
     return this.appService.getPrescriptionById(id, serviceId);
   }
 
+  @Get('api/prescriptions/:id/session')
+  @ApiTags('Prescriptions')
+  @ApiOperation({
+    summary: "Détecter si cette prescription fait partie d'une session groupée (même créneau)",
+    description:
+      "Renvoie les prescriptions sœurs (même prescriptionExternalId) planifiées sur EXACTEMENT le même " +
+      "créneau que celle-ci, avec leur statut d'avancement (dictée/compte-rendu déjà faits ou non) — utilisé " +
+      "pour enchaîner la dictée vocale et le compte-rendu procédure par procédure au sein d'une même séance.",
+  })
+  @ApiParam({ name: 'id', description: 'UUID de la prescription' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPrescriptionSession(
+    @Param('id') id: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getSameSlotSiblings(id, serviceId);
+  }
+
   // ——— Médecins ———
   @Get('api/medecins')
   @ApiTags('Médecins')
@@ -301,6 +319,25 @@ export class AppController {
   @ApiOkResponse({ description: 'Rendez-vous créé ou mis à jour' })
   async createRendezVous(@Body() data: CreateRendezVousDto) {
     return this.appService.createRendezVous(data);
+  }
+
+  @Post('api/rendezvous/groupe')
+  @Roles('MAJOR')
+  @ApiTags('Rendez-vous')
+  @ApiOperation({
+    summary: '[POST] Planifier plusieurs examens du même patient sur le même créneau (réservé au rôle Major)',
+    description:
+      "Alternative à POST /api/rendezvous appelée une fois par examen : ici, tous les prescriptionIds fournis " +
+      "sont planifiés sur EXACTEMENT le même créneau (même séance), sans que le patient ne soit considéré en " +
+      "conflit avec lui-même.",
+    operationId: 'createRendezVousGroupe',
+  })
+  @ApiOkResponse({ description: 'Rendez-vous créés' })
+  async createRendezVousGroupe(
+    @Body() data: { prescriptionIds: string[] } & Record<string, unknown>,
+  ) {
+    const { prescriptionIds, ...sharedFields } = data;
+    return this.appService.createRendezVousGroupe(prescriptionIds, sharedFields);
   }
 
   @Patch('api/rendezvous/:id')

@@ -1494,12 +1494,19 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     };
 
     // Chevauchement de créneau : [dateHeureDebut, dateHeureFin) contre les RDV existants,
-    // en excluant le RDV qu'on est en train de replanifier (même prescriptionId) et les
-    // rendez-vous annulés/terminés.
+    // en excluant le(s) RDV qu'on est en train de (re)planifier et les rendez-vous
+    // annulés/terminés. `groupePrescriptionIds` (passé par createRendezVousGroupe) exclut
+    // aussi les prescriptions sœurs du même groupe : un patient qui fait plusieurs examens
+    // au même créneau (même séance) n'est pas en conflit avec lui-même.
+    const excludedIds = data.groupePrescriptionIds?.length
+      ? data.groupePrescriptionIds
+      : resolvedPrescriptionId
+        ? [resolvedPrescriptionId]
+        : [];
     const overlapWhere = (extra: Record<string, unknown>) => ({
       serviceId,
       ...extra,
-      ...(resolvedPrescriptionId ? { prescriptionId: { not: resolvedPrescriptionId } } : {}),
+      ...(excludedIds.length ? { prescriptionId: { notIn: excludedIds } } : {}),
       dateHeureDebut: { lt: dateHeureFin },
       dateHeureFin: { gt: dateHeureDebut },
       NOT: { statut: { in: ['Annulé', 'Terminé'] } },
@@ -1578,6 +1585,120 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       console.error('Erreur lors de la création du rendez-vous:', error);
       throw error;
     }
+  }
+
+  /**
+   * Planifie plusieurs examens d'un même patient sur EXACTEMENT le même créneau (même
+   * séance) — alternative à la planification "un par un" déjà existante. Réutilise
+   * intégralement createRendezVous (mêmes validations de capacité/chevauchement), en lui
+   * signalant via groupePrescriptionIds que les prescriptions du groupe ne sont pas en
+   * conflit entre elles.
+   */
+  async createRendezVousGroupe(
+    prescriptionIds: string[],
+    sharedFields: Record<string, unknown>,
+  ) {
+    // Résout d'abord tous les ancrages locaux (un id reçu ici peut encore être l'id brut
+    // externe) pour que l'exclusion de chevauchement, ci-dessous, compare bien les mêmes
+    // ids que ceux réellement stockés sur les RendezVous créés dans cette même boucle.
+    const resolvedIds: string[] = [];
+    for (const prescriptionId of prescriptionIds) {
+      const anchor = await this.ensurePrescriptionAnchor(prescriptionId, sharedFields.serviceId as string | undefined);
+      resolvedIds.push(anchor.prescription.id);
+    }
+
+    const results: unknown[] = [];
+    for (const prescriptionId of resolvedIds) {
+      const result = await this.createRendezVous({
+        ...sharedFields,
+        prescriptionId,
+        groupePrescriptionIds: resolvedIds,
+      });
+      results.push(result);
+    }
+    return results;
+  }
+
+  /**
+   * Détecte si cette prescription fait partie d'une "session groupée" : plusieurs
+   * prescriptions du même patient (même prescriptionExternalId) planifiées sur
+   * EXACTEMENT le même créneau (même rendezVous.dateHeureDebut) — signal implicite
+   * qu'elles se font en une seule séance, sans introduire de nouveau modèle/flag
+   * persistant. Réutilisé pour mettre en miroir les checklists avant/après (une seule
+   * saisie pour toute la séance) et pour enchaîner dictée vocale / compte-rendu
+   * procédure par procédure côté frontend.
+   */
+  async getSameSlotSiblings(
+    prescriptionId: string,
+    serviceIdOverride?: string,
+  ): Promise<{
+    sameSlot: boolean;
+    exams: Array<{ id: string; patientId: string; typeExamen: string; hasOperation: boolean; hasResultat: boolean }>;
+  }> {
+    const current = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      include: { rendezVous: true },
+    });
+    if (!current?.prescriptionExternalId || !current.rendezVous?.dateHeureDebut) {
+      return { sameSlot: false, exams: [] };
+    }
+
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const siblings = await this.prisma.prescription.findMany({
+      where: { serviceId, prescriptionExternalId: current.prescriptionExternalId },
+      include: { rendezVous: true, operationEndoscopie: true, resultatEndoscopie: true },
+    });
+
+    const currentSlot = current.rendezVous.dateHeureDebut.getTime();
+    const sameSlot = siblings.filter(
+      (s) => s.rendezVous?.dateHeureDebut?.getTime() === currentSlot,
+    );
+
+    if (sameSlot.length < 2) {
+      return { sameSlot: false, exams: [] };
+    }
+
+    return {
+      sameSlot: true,
+      exams: sameSlot.map((s) => ({
+        id: s.id,
+        patientId: s.patientId,
+        typeExamen: s.typeExamen,
+        hasOperation: !!s.operationEndoscopie,
+        hasResultat: !!s.resultatEndoscopie,
+      })),
+    };
+  }
+
+  /**
+   * Recopie une checklist avant/après vers les prescriptions sœurs de même créneau (voir
+   * getSameSlotSiblings) — une session groupée n'a qu'UNE checklist avant/après pour
+   * toute la séance, mais chaque prescription garde sa propre ligne (schéma 1-à-1
+   * inchangé) pour que tout le reste du workflow (statuts, garde-fous par prescription...)
+   * continue de fonctionner sans modification.
+   */
+  private async mirrorChecklistToSiblings(
+    model: 'checklistAvant' | 'checklistApres',
+    prescriptionId: string,
+    checklistData: Record<string, unknown>,
+    serviceIdOverride?: string,
+  ): Promise<void> {
+    const { sameSlot, exams } = await this.getSameSlotSiblings(prescriptionId, serviceIdOverride);
+    if (!sameSlot) return;
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    await Promise.all(
+      exams
+        .filter((e) => e.id !== prescriptionId)
+        .map((e) =>
+          (this.prisma[model] as any)
+            .upsert({
+              where: { prescriptionId: e.id },
+              update: checklistData,
+              create: { ...checklistData, serviceId, prescriptionId: e.id, patientId: e.patientId },
+            })
+            .catch(() => undefined),
+        ),
+    );
   }
 
   async updateRendezVous(
@@ -1778,7 +1899,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       rendezVousId: data.rendezVousId || null,
     };
 
-    return this.prisma.checklistAvant.upsert({
+    const checklist = await this.prisma.checklistAvant.upsert({
       where: { prescriptionId: data.prescriptionId },
       update: checklistData,
       create: {
@@ -1788,6 +1909,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         patientId: data.patientId,
       },
     });
+
+    await this.mirrorChecklistToSiblings('checklistAvant', data.prescriptionId, checklistData, data.serviceId);
+
+    return checklist;
   }
 
   /** Notes/observations libres horodatées ajoutées manuellement au dossier patient. */
@@ -1890,6 +2015,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    await this.mirrorChecklistToSiblings('checklistApres', data.prescriptionId, checklistData, data.serviceId);
     await this.markTermineIfComplete(data.prescriptionId);
 
     return checklist;
