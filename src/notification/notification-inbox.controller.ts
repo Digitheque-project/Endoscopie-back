@@ -21,7 +21,8 @@ import { Observable } from 'rxjs';
 import { MessageEvent } from '@nestjs/common';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { NotificationInboxService } from './notification-inbox.service';
-import { AppRole, ROLE_HEADER } from '../auth/roles.types';
+import { ROLE_HEADER } from '../auth/roles.types';
+import type { AppRole } from '../auth/roles.types';
 
 @ApiTags('Notifications')
 @Controller()
