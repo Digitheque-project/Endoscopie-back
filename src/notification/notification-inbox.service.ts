@@ -4,10 +4,9 @@ import { MessageEvent } from '@nestjs/common';
 import { Observable, Subject, interval, map, merge } from 'rxjs';
 import { ReceiveNotificationDto } from '../dto/receive-notification.dto';
 import { notificationMatchesServiceId } from './notification-filter.util';
-import { InboxNotification, InboxNotificationView } from './notification-inbox.types';
+import { InboxNotification } from './notification-inbox.types';
 import { PrismaService } from '../prisma/prisma.service';
 import { CpaBlocService } from '../services/cpa-bloc.service';
-import { AppRole } from '../auth/roles.types';
 
 /** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
 const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
@@ -117,35 +116,15 @@ export class NotificationInboxService {
     this.logger.log(`Notification [${dto.type}] appliquée au dossier ${dossierId}`);
   }
 
-  /** Vue d'un item scopée à un rôle — readAt ne reflète que ce que CE rôle a lu. */
-  private toRoleView(item: InboxNotification, role?: AppRole): InboxNotificationView {
-    const { readByRole, ...rest } = item;
-    return { ...rest, readAt: (role && readByRole[role]) ?? null };
+  listInbox(limit = 50): InboxNotification[] {
+    return this.items.slice(0, Math.min(limit, MAX_INBOX));
   }
 
-  listInbox(limit = 50, role?: AppRole): InboxNotificationView[] {
-    return this.items
-      .slice(0, Math.min(limit, MAX_INBOX))
-      .map((item) => this.toRoleView(item, role));
-  }
-
-  markRead(id: string, role?: AppRole): InboxNotificationView | null {
+  markRead(id: string): InboxNotification | null {
     const item = this.items.find((n) => n.id === id);
     if (!item) return null;
-    if (role) {
-      const now = new Date().toISOString();
-      item.readByRole[role] = now;
-      // Le médecin voit les notifications de nouvelles prescriptions pour surveiller le
-      // travail du major (voir handleOpenItem côté frontend, non navigable pour lui),
-      // mais n'a jamais de raison de les lire lui-même — sans ça elles s'accumulaient
-      // indéfiniment dans son compteur. Dès que le major les traite, elles se marquent
-      // aussi lues pour le médecin. Uniquement dans ce sens : le médecin qui clique
-      // dessus ne doit pas masquer la notification chez le major, qui doit encore agir.
-      if (role === 'MAJOR' && item.type === 'DEMANDE_EXAMEN') {
-        item.readByRole.MEDECIN = now;
-      }
-    }
-    return this.toRoleView(item, role);
+    item.readAt = new Date().toISOString();
+    return item;
   }
 
   stream(): Observable<MessageEvent> {
@@ -189,7 +168,7 @@ export class NotificationInboxService {
       // à l'instant présent — sinon une prescription d'hier redétectée après un redémarrage
       // du serveur s'affiche à tort comme arrivée à l'instant.
       receivedAt: dto.created_at ?? dto.createdAt ?? new Date().toISOString(),
-      readByRole: {},
+      readAt: null,
     };
   }
 }

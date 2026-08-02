@@ -1,5 +1,3 @@
-import { AppRole } from '../auth/roles.types';
-
 export type InboxNotification = {
   id: string;
   externalId?: string;
@@ -14,14 +12,11 @@ export type InboxNotification = {
   entiteRefId?: string;
   payload?: Record<string, unknown>;
   receivedAt: string;
-  // Le major et le médecin voient chacun leurs propres notifications non lues,
-  // indépendamment l'un de l'autre — sans ça, le premier des deux à ouvrir/cliquer
-  // une notification la fait disparaître pour l'autre alors qu'il ne l'a jamais vue,
-  // avec le risque réel de rater l'arrivée d'un nouveau patient.
-  readByRole: Partial<Record<AppRole, string>>;
-};
-
-/** Vue exposée à un rôle donné — readAt reflète UNIQUEMENT ce que ce rôle a lu. */
-export type InboxNotificationView = Omit<InboxNotification, 'readByRole'> & {
+  // Statut lu/non-lu partagé entre le major et le médecin — les deux voient les mêmes
+  // notifications avec le même compteur ("continuité"). Le seul garde-fou spécifique au
+  // rôle est côté frontend : le clic du médecin sur une notification de nouvelle
+  // prescription ne déclenche pas ce marquage (voir NotificationBell.tsx), pour qu'il ne
+  // puisse pas faire disparaître par erreur une prescription que le major n'a pas encore
+  // traitée — mais dès que le major la lit, elle disparaît bien pour les deux.
   readAt: string | null;
 };
