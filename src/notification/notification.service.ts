@@ -130,7 +130,10 @@ export class NotificationService {
           entiteRefType: fallback.entiteRefType,
           entiteRefId: fallback.entiteRefId,
           payload: mergedPayload,
-          created_at: remote.created_at as string | undefined,
+          // La date métier fournie par l'appelant (ex. dateDemande de la prescription)
+          // prévaut toujours sur celle du service notification externe, qui ne reflète
+          // que l'instant de cet appel, pas l'origine réelle de l'événement.
+          created_at: fallback.createdAt ?? (remote.created_at as string | undefined),
         },
         { source: 'endoscopie-back' },
       );
@@ -156,6 +159,7 @@ export class NotificationService {
           motif?: string | null;
           patient?: { nom: string; prenom: string } | null;
           medecinPrescripteur?: { nom: string; prenom: string } | null;
+          createdAt?: string | Date | null;
         }
       | Array<{
           id: string;
@@ -164,6 +168,7 @@ export class NotificationService {
           motif?: string | null;
           patient?: { nom: string; prenom: string } | null;
           medecinPrescripteur?: { nom: string; prenom: string } | null;
+          createdAt?: string | Date | null;
         }>,
   ): Promise<unknown | null> {
     const list = Array.isArray(prescription) ? prescription : [prescription];
@@ -192,6 +197,9 @@ export class NotificationService {
       entiteRefType: 'Prescription',
       entiteRefId: primary.id,
       channels: ['INTERNAL', 'SOUND'],
+      createdAt: primary.createdAt
+        ? new Date(primary.createdAt).toISOString()
+        : undefined,
       payload: {
         sourceServiceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
         sourceServiceName: 'Unité Endoscopie',

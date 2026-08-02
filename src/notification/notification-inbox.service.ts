@@ -132,7 +132,19 @@ export class NotificationInboxService {
   markRead(id: string, role?: AppRole): InboxNotificationView | null {
     const item = this.items.find((n) => n.id === id);
     if (!item) return null;
-    if (role) item.readByRole[role] = new Date().toISOString();
+    if (role) {
+      const now = new Date().toISOString();
+      item.readByRole[role] = now;
+      // Le médecin voit les notifications de nouvelles prescriptions pour surveiller le
+      // travail du major (voir handleOpenItem côté frontend, non navigable pour lui),
+      // mais n'a jamais de raison de les lire lui-même — sans ça elles s'accumulaient
+      // indéfiniment dans son compteur. Dès que le major les traite, elles se marquent
+      // aussi lues pour le médecin. Uniquement dans ce sens : le médecin qui clique
+      // dessus ne doit pas masquer la notification chez le major, qui doit encore agir.
+      if (role === 'MAJOR' && item.type === 'DEMANDE_EXAMEN') {
+        item.readByRole.MEDECIN = now;
+      }
+    }
     return this.toRoleView(item, role);
   }
 
@@ -173,7 +185,10 @@ export class NotificationInboxService {
       entiteRefType: dto.entiteRefType,
       entiteRefId: dto.entiteRefId,
       payload: dto.payload,
-      receivedAt: new Date().toISOString(),
+      // Préfère la vraie date de l'événement métier (voir CreateNotificationPayload.createdAt)
+      // à l'instant présent — sinon une prescription d'hier redétectée après un redémarrage
+      // du serveur s'affiche à tort comme arrivée à l'instant.
+      receivedAt: dto.created_at ?? dto.createdAt ?? new Date().toISOString(),
       readByRole: {},
     };
   }

@@ -190,6 +190,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
               motif: d.renseignements || d.remarques || null,
               patient: d.patient,
               medecinPrescripteur: d.medecinPrescripteur,
+              // Date réelle de la demande côté service externe — pas l'instant de cette
+              // détection, qui peut survenir bien après (redémarrage du serveur, voir
+              // seenExternalPrescriptionIds) et laisserait sinon croire à tort à une
+              // arrivée du jour même.
+              createdAt: d.createdAt,
             })),
           );
         } catch (e) {
