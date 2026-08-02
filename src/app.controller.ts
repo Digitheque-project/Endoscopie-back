@@ -104,6 +104,20 @@ export class AppController {
     return this.appService.getPrescriptions(serviceId);
   }
 
+  @Get('api/prescriptions/pending-reports')
+  @ApiTags('Prescriptions')
+  @ApiOperation({
+    summary: 'Lister les prescriptions en attente de compte-rendu',
+    description:
+      "Doit rester déclarée AVANT GET /api/prescriptions/:id : sinon Nest fait correspondre " +
+      "cette route à :id en premier (\"pending-reports\" traité comme un id), ce qui produit " +
+      "un 404 \"introuvable\" au lieu de la liste attendue.",
+  })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getPendingReports(@Query('serviceId') serviceId?: string) {
+    return this.appService.getPendingReports(serviceId);
+  }
+
   @Get('api/prescriptions/:id')
   @ApiTags('Prescriptions')
   @ApiOperation({ summary: 'Récupérer une prescription par ID' })

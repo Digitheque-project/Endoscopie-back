@@ -756,6 +756,40 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Prescriptions sans compte-rendu enregistré, dès lors que :
+   *  - la checklist après est validée (examen terminé normalement), OU
+   *  - une opération a été commencée (panne électrique / interruption en cours).
+   * Reconstruit à partir de getPrescriptions() (live) plutôt qu'une lecture locale brute,
+   * pour rester cohérent avec le reste de l'architecture — seules operationEndoscopie et
+   * resultatEndoscopie (absents de getPrescriptions, inutiles ailleurs) sont requêtés
+   * séparément ici.
+   */
+  async getPendingReports(serviceIdOverride?: string) {
+    const prescriptions = await this.getPrescriptions(serviceIdOverride);
+    if (prescriptions.length === 0) return [];
+
+    const ids = prescriptions.map((p) => p.id);
+    const [withOperation, withResultat] = await Promise.all([
+      this.prisma.operationEndoscopie.findMany({
+        where: { prescriptionId: { in: ids } },
+        select: { prescriptionId: true },
+      }),
+      this.prisma.resultatEndoscopie.findMany({
+        where: { prescriptionId: { in: ids } },
+        select: { prescriptionId: true },
+      }),
+    ]);
+    const hasOperation = new Set(withOperation.map((o) => o.prescriptionId));
+    const hasResultat = new Set(withResultat.map((r) => r.prescriptionId));
+
+    return prescriptions
+      .filter(
+        (p) => !hasResultat.has(p.id) && (p.checklistApres?.estValide || hasOperation.has(p.id)),
+      )
+      .sort((a, b) => new Date(b.dateDemande).getTime() - new Date(a.dateDemande).getTime());
+  }
+
+  /**
    * Garantit qu'une ligne locale (ancrage minimal) existe pour cette prescription — id
    * local, externalId, ou id brut externe jamais encore ouvert — en la créant à la volée
    * si besoin. Réutilisé par getPrescriptionById et par tout point d'écriture (rendez-vous
