@@ -806,6 +806,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private async ensurePrescriptionAnchor(
     id: string,
     serviceIdOverride?: string,
+    // Permet à un appelant qui résout plusieurs prescriptions d'affilée (voir
+    // createRendezVousGroupe) de partager un seul pull externe au lieu d'en refaire un
+    // complet par prescription — chaque pull interroge le service prescription pour
+    // toutes les combinaisons serviceId/chuId, ce qui devient vite coûteux en série.
+    preloadedExternal?: FlatExternalDemande[],
   ): Promise<{
     prescription: { id: string; externalId: string | null; serviceId: string };
     ext: FlatExternalDemande | null;
@@ -824,7 +829,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    const external = await this.fetchExternalPrescriptions(serviceIdOverride);
+    const external = preloadedExternal ?? (await this.fetchExternalPrescriptions(serviceIdOverride));
     const ext = external.find((e) => e.id === (prescription?.externalId ?? id)) ?? null;
 
     // Auto-réparation : une ligne ancrée avant que typeExamen soit renseigné à la
@@ -1514,8 +1519,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Résout (et crée si besoin) l'ancrage local — le patient a pu cliquer "Planifier"
     // directement depuis le Fil de prescription sans jamais ouvrir le détail du dossier,
     // auquel cas prescriptionId reçu ici est encore l'id brut externe, pas un id local.
+    // Si l'appel vient de createRendezVousGroupe, l'id est déjà résolu (et le refaire ici
+    // redéclencherait un pull externe complet par examen du groupe, en plus de celui déjà
+    // fait — largement suffisant pour transformer une planification de quelques centaines
+    // de ms en plusieurs secondes, jusqu'à faire abandonner le navigateur avec "Failed to
+    // fetch" alors que la création se termine correctement en arrière-plan).
     const resolvedPrescriptionId = data.prescriptionId
-      ? (await this.ensurePrescriptionAnchor(data.prescriptionId, data.serviceId)).prescription.id
+      ? data.groupePrescriptionIds?.length
+        ? data.prescriptionId
+        : (await this.ensurePrescriptionAnchor(data.prescriptionId, data.serviceId)).prescription.id
       : null;
 
     const rendezVousPayload = {
@@ -1640,9 +1652,16 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Résout d'abord tous les ancrages locaux (un id reçu ici peut encore être l'id brut
     // externe) pour que l'exclusion de chevauchement, ci-dessous, compare bien les mêmes
     // ids que ceux réellement stockés sur les RendezVous créés dans cette même boucle.
+    // Un seul pull externe partagé pour tout le groupe — sinon chaque ensurePrescriptionAnchor
+    // refait indépendamment un fetchExternalPrescriptions() complet (plusieurs allers-retours
+    // HTTP chacun), ce qui pour un groupe de N examens multipliait la latence par N et pouvait
+    // dépasser le délai d'attente du navigateur ("Failed to fetch" alors que tout se créait
+    // correctement en arrière-plan).
+    const serviceIdForGroup = sharedFields.serviceId as string | undefined;
+    const external = await this.fetchExternalPrescriptions(serviceIdForGroup);
     const resolvedIds: string[] = [];
     for (const prescriptionId of prescriptionIds) {
-      const anchor = await this.ensurePrescriptionAnchor(prescriptionId, sharedFields.serviceId as string | undefined);
+      const anchor = await this.ensurePrescriptionAnchor(prescriptionId, serviceIdForGroup, external);
       resolvedIds.push(anchor.prescription.id);
     }
 
