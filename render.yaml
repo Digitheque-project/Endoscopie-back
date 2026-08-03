@@ -1,0 +1,65 @@
+# Blueprint Render — déploiement du backend NestJS
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: endoscopie-api
+    runtime: node
+    rootDir: endoscopie-back
+    buildCommand: npm install --include=dev && npx prisma generate && npx prisma db push && npm run build
+    startCommand: npm run start:render
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Base de données déployée (Supabase Postgres) — à renseigner manuellement dans le
+      # dashboard Render. Jamais de SQLite (voir prisma/schema.prisma : provider postgresql).
+      - key: DATABASE_URL
+        sync: false
+      # Même URL Supabase, connexion directe port 5432 sans pgbouncer
+      - key: DIRECT_URL
+        sync: false
+      # Identité Endoscopie — valeur de secours uniquement : résolue automatiquement au
+      # démarrage depuis SERVICE_REGISTRY_API_URL (voir plus bas), pas besoin de la
+      # tenir à jour manuellement.
+      - key: ENDOSCOPIE_SERVICE_ID
+        value: ab97eaaa-9239-4f37-b5d7-d652c4231cc7
+      - key: ENDOSCOPIE_CHU_ID
+        value: 72d49761-2a65-446d-b025-15a74cac1ad4
+      # Alias historique (même valeur qu'ENDOSCOPIE_SERVICE_ID ci-dessus)
+      - key: ENDOSCOPIE_AUTH_SERVICE_ID
+        value: ab97eaaa-9239-4f37-b5d7-d652c4231cc7
+      - key: ENDOSCOPIE_AUTH_CHU_ID
+        value: 1e5bbbb7-fa10-4d59-8848-2d0ce96a9394
+      - key: SERVICE_REGISTRY_API_URL
+        value: https://service-service-0f7p.onrender.com
+      - key: CHU_API_URL
+        value: https://chu-service-cms7.onrender.com
+      - key: ACCUEIL_API_URL
+        value: https://acceuil-back.onrender.com
+      - key: NOTIFICATION_API_URL
+        value: https://service-notification-nlqp.onrender.com
+      - key: NOTIFICATION_WEBHOOK_SECRET
+        sync: false
+      - key: BLOC_API_URL
+        value: https://bloc-prud.onrender.com/bloc/api
+      - key: PRESCRIPTION_EXT_API_URL
+        value: https://prescriptionback-production.up.railway.app/prescriptions
+      # Écosystème d'authentification CHU partagé — notre backend s'y connecte lui-même
+      # (compte de service) pour obtenir un token à joindre à ses appels serveur-à-serveur
+      # vers des services externes qui l'exigent (ex. PRESCRIPTION_EXT_API_URL ci-dessus).
+      - key: CHU_AUTH_LOGIN_URL
+        value: https://auth-service-4q6g.onrender.com
+      - key: CHU_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: CHU_SERVICE_ACCOUNT_PASSWORD
+        sync: false
+      # Service utilisateurs de l'écosystème d'authentification CHU — liste des médecins
+      # (voir src/services/medecins.service.ts). Distinct de CHU_AUTH_LOGIN_URL : le login
+      # passe par l'auth-service, la lecture des utilisateurs interroge ce service directement.
+      - key: AUTH_USER_SERVICE_URL
+        value: https://user-services-0sze.onrender.com
+      - key: DOSSIER_PATIENT_API_URL
+        value: https://dossier-patient-back-6s2j.onrender.com/dossier-patient
+      # URL Render du front une fois déployé — nécessaire pour le CORS
+      - key: FRONTEND_URL
+        sync: false
+    healthCheckPath: /

@@ -1,0 +1,1 @@
+const {PrismaClient}=require('@prisma/client'); const prisma=new PrismaClient(); (async()=>{ try{ const rows=await prisma.prescription.groupBy({by:['typeExamen'], orderBy:{typeExamen:'asc'}}); console.log(JSON.stringify(rows,null,2)); } catch(e){ console.error(e); process.exit(1);} finally{ await prisma.();}})();
