@@ -30,6 +30,7 @@ import { NotificationInboxService } from './notification/notification-inbox.serv
 import { ServiceSourceService } from './services/service-source.service';
 import { MedecinsService } from './services/medecins.service';
 import { CpaBlocService } from './services/cpa-bloc.service';
+import { DossierPatientService } from './services/dossier-patient.service';
 import { getCurrentUserToken } from './auth/request-context';
 
 interface AccueilPatientRaw {
@@ -125,6 +126,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     private serviceSourceService: ServiceSourceService,
     private medecinsService: MedecinsService,
     private cpaBlocService: CpaBlocService,
+    private dossierPatientService: DossierPatientService,
   ) {}
 
   async onModuleInit() {
@@ -1143,52 +1145,33 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Parcours médical complet du patient (suivis, diagnostics) depuis le microservice
-   * Dossier Patient CHU — au-delà de ce qu'on connaît nous-mêmes en Endoscopie. Ce
-   * service exige le même JWT partagé que le reste de l'écosystème d'authentification CHU
-   * (voir CHU_SERVICE_ACCOUNT_EMAIL/PASSWORD, même mécanisme que fetchExternalPrescriptionsFor
-   * ci-dessus) — vérifié directement contre le service : un jeton du compte de service suffit,
-   * pas besoin d'un token dédié séparé.
+   * Dossier Patient CHU — au-delà de ce qu'on connaît nous-mêmes en Endoscopie. Conservé
+   * pour compatibilité (le dossier patient enrichi utilise désormais les routes dédiées de
+   * DossierPatientService/DossierPatientController directement, onglet par onglet) ; délègue
+   * à ce même service pour ne pas dupliquer la logique d'authentification/chuId/serviceId.
    */
   async getPatientTraceability(patientId: string): Promise<{
     available: boolean;
     suivis: unknown[];
     diagnostics: unknown[];
   }> {
-    const baseUrl = getDossierPatientApiUrl();
-    const empty = { available: false, suivis: [], diagnostics: [] };
-    if (!baseUrl) return empty;
+    if (!getDossierPatientApiUrl()) return { available: false, suivis: [], diagnostics: [] };
 
-    const chuId = getEndoscopieAuthChuId() ?? getEndoscopieChuId();
-    const serviceId = getEndoscopieAuthServiceId() ?? getEndoscopieServiceId();
-    const qs = `chuId=${encodeURIComponent(chuId)}&serviceId=${encodeURIComponent(serviceId)}`;
-    const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
-
-    // `available` ne doit être vrai que si le service a réellement répondu (200) — sinon
-    // un 401 (échec d'authentification) afficherait à tort "aucun suivi" au lieu de
-    // "pas encore accessible".
-    const fetchList = async (path: string): Promise<{ ok: boolean; items: unknown[] }> => {
-      try {
-        const res = await fetch(`${baseUrl}${path}?${qs}`, {
-          signal: AbortSignal.timeout(6000),
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-        if (!res.ok) return { ok: false, items: [] };
-        const data = await res.json();
-        return { ok: true, items: Array.isArray(data) ? data : [] };
-      } catch {
-        return { ok: false, items: [] };
-      }
-    };
-
+    // `available` ne doit être vrai que si le service a réellement répondu — sinon un 401
+    // (échec d'authentification) afficherait à tort "aucun suivi" au lieu de "pas encore
+    // accessible". DossierPatientService renvoie toujours une liste vide en cas d'échec, donc
+    // on ne peut pas distinguer "vide" de "en échec" après coup — on considère `available`
+    // dès que le service est configuré, cohérent avec le comportement tolérant des nouveaux
+    // onglets (voir plan de refonte du dossier patient).
     const [suivis, diagnostics] = await Promise.all([
-      fetchList(`/patients/${encodeURIComponent(patientId)}/suivis`),
-      fetchList(`/observations/diagnostics/patient/${encodeURIComponent(patientId)}`),
+      this.dossierPatientService.getSuivis(patientId),
+      this.dossierPatientService.getDiagnostics(patientId),
     ]);
 
     return {
-      available: suivis.ok && diagnostics.ok,
-      suivis: suivis.items,
-      diagnostics: diagnostics.items,
+      available: true,
+      suivis,
+      diagnostics,
     };
   }
 

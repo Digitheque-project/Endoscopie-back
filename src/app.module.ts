@@ -10,6 +10,7 @@ import { ExternalApiModule } from './external-api/external-api.module';
 import { ServiceSourceModule } from './service-source/service-source.module';
 import { MedecinsModule } from './services/medecins.module';
 import { CpaBlocModule } from './services/cpa-bloc.module';
+import { DossierPatientModule } from './dossier-patient/dossier-patient.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { CpaBlocModule } from './services/cpa-bloc.module';
     ServiceSourceModule,
     MedecinsModule,
     CpaBlocModule,
+    DossierPatientModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: RolesGuard }],
