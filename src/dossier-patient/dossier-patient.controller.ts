@@ -1,7 +1,11 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam } from '@nestjs/swagger';
 import { DossierPatientService } from '../services/dossier-patient.service';
 
+/**
+ * Lecture seule — voir le commentaire de DossierPatientService. Aucune route de création/
+ * modification n'est exposée ici volontairement.
+ */
 @ApiTags('Dossier Patient CHU')
 @Controller('api/dossier-patient')
 export class DossierPatientController {
@@ -14,22 +18,10 @@ export class DossierPatientController {
     return this.dossierPatientService.getObservations(patientId);
   }
 
-  @Post(':patientId/observations')
-  @ApiOperation({ summary: 'Créer une observation médicale' })
-  createObservation(@Param('patientId') patientId: string, @Body() body: Record<string, unknown>) {
-    return this.dossierPatientService.createObservation(patientId, body);
-  }
-
   @Get(':patientId/diagnostics')
   @ApiOperation({ summary: 'Diagnostics du patient (Dossier Patient CHU)' })
   getDiagnostics(@Param('patientId') patientId: string) {
     return this.dossierPatientService.getDiagnostics(patientId);
-  }
-
-  @Post(':patientId/diagnostics')
-  @ApiOperation({ summary: 'Créer un diagnostic' })
-  createDiagnostic(@Param('patientId') patientId: string, @Body() body: Record<string, unknown>) {
-    return this.dossierPatientService.createDiagnostic(patientId, body);
   }
 
   @Get(':patientId/suivis')
@@ -38,22 +30,10 @@ export class DossierPatientController {
     return this.dossierPatientService.getSuivis(patientId);
   }
 
-  @Post(':patientId/suivis')
-  @ApiOperation({ summary: 'Ajouter un suivi quotidien' })
-  createSuivi(@Param('patientId') patientId: string, @Body() body: Record<string, unknown>) {
-    return this.dossierPatientService.createSuivi(patientId, body);
-  }
-
   @Get(':patientId/parametres')
   @ApiOperation({ summary: 'Relevés de paramètres du patient (Dossier Patient CHU)' })
   getParametres(@Param('patientId') patientId: string) {
     return this.dossierPatientService.getParametres(patientId);
-  }
-
-  @Post(':patientId/parametres')
-  @ApiOperation({ summary: 'Ajouter un relevé manuel de paramètres' })
-  createParametre(@Param('patientId') patientId: string, @Body() body: Record<string, unknown>) {
-    return this.dossierPatientService.createParametre(patientId, body);
   }
 
   @Get(':patientId/historique')
@@ -72,11 +52,5 @@ export class DossierPatientController {
   })
   getResultats(@Param('patientId') patientId: string) {
     return this.dossierPatientService.getResultats(patientId);
-  }
-
-  @Patch(':patientId/resultats/:resultatId/lu')
-  @ApiOperation({ summary: 'Marquer un résultat paraclinique comme lu' })
-  markResultatLu(@Param('patientId') patientId: string, @Param('resultatId') resultatId: string) {
-    return this.dossierPatientService.markResultatLu(patientId, resultatId);
   }
 }

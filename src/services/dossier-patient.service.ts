@@ -17,8 +17,11 @@ interface DossierPatientContext {
 }
 
 /**
- * Proxy centralisé vers le microservice Dossier Patient CHU (DOSSIER_PATIENT_API_URL) —
- * observations, diagnostics, suivis, paramètres, historique, résultats paracliniques.
+ * Proxy en lecture seule vers le microservice Dossier Patient CHU (DOSSIER_PATIENT_API_URL)
+ * — observations, diagnostics, suivis, paramètres, historique, résultats paracliniques.
+ * Volontairement lecture seule : ce dossier est propriété partagée de l'écosystème CHU
+ * (rempli par les services qui prennent réellement en charge le patient) — Endoscopie ne
+ * fait que le consulter, jamais le modifier ni le compléter depuis cette interface.
  * Même mécanisme d'authentification que fetchExternalPrescriptionsFor/getPatientTraceability
  * dans AppService : jeton de l'utilisateur courant si présent, sinon le jeton du compte de
  * service partagé de l'écosystème CHU (vérifié fonctionnel contre ce service).
@@ -68,63 +71,24 @@ export class DossierPatientService {
     }
   }
 
-  private async send(method: 'POST' | 'PATCH', path: string, body: Record<string, unknown>): Promise<unknown> {
-    const ctx = await this.context();
-    if (!ctx) {
-      throw new Error('Service Dossier Patient CHU non configuré (DOSSIER_PATIENT_API_URL absent).');
-    }
-    const res = await fetch(`${ctx.baseUrl}${path}`, {
-      method,
-      headers: this.headers(ctx.token),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Dossier Patient CHU ${method} ${path} a échoué (${res.status})${text ? `: ${text}` : ''}`);
-    }
-    return res.json();
-  }
-
-  private async withChuService<T extends Record<string, unknown>>(data: T): Promise<T & { chuId: string; serviceId: string }> {
-    const ctx = await this.context();
-    return { ...data, chuId: ctx?.chuId ?? '', serviceId: ctx?.serviceId ?? '' };
-  }
-
   // Observations
   getObservations(patientId: string) {
     return this.getList(`/observations/patient/${encodeURIComponent(patientId)}`);
-  }
-  async createObservation(patientId: string, data: Record<string, unknown>) {
-    return this.send('POST', '/observations', await this.withChuService({ ...data, patientId }));
   }
 
   // Diagnostics
   getDiagnostics(patientId: string) {
     return this.getList('/diagnostics', { patientId });
   }
-  async createDiagnostic(patientId: string, data: Record<string, unknown>) {
-    return this.send('POST', '/diagnostics', await this.withChuService({ ...data, patientId }));
-  }
 
   // Suivis quotidiens
   getSuivis(patientId: string) {
     return this.getList(`/patients/${encodeURIComponent(patientId)}/suivis`);
   }
-  async createSuivi(patientId: string, data: Record<string, unknown>) {
-    return this.send('POST', `/patients/${encodeURIComponent(patientId)}/suivis`, await this.withChuService(data));
-  }
 
-  // Paramètres (relevé manuel)
+  // Paramètres (relevés)
   getParametres(patientId: string) {
     return this.getList(`/patients/${encodeURIComponent(patientId)}/parametres`);
-  }
-  async createParametre(patientId: string, data: Record<string, unknown>) {
-    return this.send(
-      'POST',
-      `/patients/${encodeURIComponent(patientId)}/parametres`,
-      await this.withChuService({ ...data, origine: 'RELEVE_MANUEL' }),
-    );
   }
 
   // Historique d'actions — pas encore implémenté côté service au moment de l'écriture,
@@ -136,12 +100,5 @@ export class DossierPatientService {
   // Résultats paracliniques — idem, pas encore implémenté côté service.
   getResultats(patientId: string) {
     return this.getList(`/patients/${encodeURIComponent(patientId)}/resultats`);
-  }
-  async markResultatLu(patientId: string, resultatId: string) {
-    return this.send(
-      'PATCH',
-      `/patients/${encodeURIComponent(patientId)}/resultats/${encodeURIComponent(resultatId)}/lu`,
-      await this.withChuService({}),
-    );
   }
 }
