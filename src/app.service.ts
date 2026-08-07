@@ -1144,10 +1144,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   /**
    * Parcours médical complet du patient (suivis, diagnostics) depuis le microservice
    * Dossier Patient CHU — au-delà de ce qu'on connaît nous-mêmes en Endoscopie. Ce
-   * service exige son propre token que nous n'avons pas encore reçu : tant que ce
-   * n'est pas le cas, chaque appel échoue en 401 et on renvoie simplement des listes
-   * vides plutôt que de casser l'affichage du dossier patient. Dès qu'un token nous
-   * sera fourni (voir DOSSIER_PATIENT_API_URL), ceci fonctionnera sans autre changement.
+   * service exige le même JWT partagé que le reste de l'écosystème d'authentification CHU
+   * (voir CHU_SERVICE_ACCOUNT_EMAIL/PASSWORD, même mécanisme que fetchExternalPrescriptionsFor
+   * ci-dessus) — vérifié directement contre le service : un jeton du compte de service suffit,
+   * pas besoin d'un token dédié séparé.
    */
   async getPatientTraceability(patientId: string): Promise<{
     available: boolean;
@@ -1161,14 +1161,16 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const chuId = getEndoscopieAuthChuId() ?? getEndoscopieChuId();
     const serviceId = getEndoscopieAuthServiceId() ?? getEndoscopieServiceId();
     const qs = `chuId=${encodeURIComponent(chuId)}&serviceId=${encodeURIComponent(serviceId)}`;
+    const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
 
     // `available` ne doit être vrai que si le service a réellement répondu (200) — sinon
-    // un 401 (token propre pas encore fourni) afficherait à tort "aucun suivi" au lieu de
+    // un 401 (échec d'authentification) afficherait à tort "aucun suivi" au lieu de
     // "pas encore accessible".
     const fetchList = async (path: string): Promise<{ ok: boolean; items: unknown[] }> => {
       try {
         const res = await fetch(`${baseUrl}${path}?${qs}`, {
           signal: AbortSignal.timeout(6000),
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         });
         if (!res.ok) return { ok: false, items: [] };
         const data = await res.json();

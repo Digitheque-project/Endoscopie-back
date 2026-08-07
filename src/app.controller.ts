@@ -87,8 +87,8 @@ export class AppController {
     summary: "Parcours médical complet du patient (dossier patient CHU)",
     description:
       "Suivis et diagnostics du patient au-delà de l'Endoscopie, depuis le microservice Dossier Patient CHU. " +
-      "Ce service n'est pas encore relié (token propre non fourni) : renvoie `available: false` et des listes vides " +
-      "jusqu'à ce qu'il le soit, sans jamais échouer.",
+      "Authentifié avec le même JWT partagé que le reste de l'écosystème CHU. Si le service est injoignable ou " +
+      "renvoie une erreur, `available: false` et des listes vides plutôt qu'un échec de cet endpoint.",
   })
   @ApiParam({ name: 'id', description: 'Identifiant Accueil du patient' })
   async getPatientTraceability(@Param('id') id: string) {
