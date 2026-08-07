@@ -130,6 +130,22 @@ export class AppController {
     return this.appService.getPrescriptionById(id, serviceId);
   }
 
+  @Patch('api/prescriptions/:id/examens-complementaires')
+  @ApiTags('Prescriptions')
+  @ApiOperation({
+    summary: "Enregistrer la demande d'examens complémentaires",
+    description:
+      "Champ libre propre à Endoscopie (pas le dossier patient CHU, lecture seule) — le médecin y note les examens " +
+      "complémentaires à prévoir/demander si nécessaire, avant ou pendant l'opération.",
+  })
+  @ApiParam({ name: 'id', description: 'UUID de la prescription' })
+  async updateExamensComplementaires(
+    @Param('id') id: string,
+    @Body('examensComplementaires') examensComplementaires: string,
+  ) {
+    return this.appService.updateExamensComplementaires(id, examensComplementaires);
+  }
+
   @Get('api/prescriptions/:id/session')
   @ApiTags('Prescriptions')
   @ApiOperation({

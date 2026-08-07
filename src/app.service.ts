@@ -913,6 +913,21 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     return this.attachPatient(withMedecin);
   }
 
+  /**
+   * Champ libre propre à Endoscopie (pas le dossier patient CHU, lecture seule) — le
+   * médecin y note les examens complémentaires à prévoir/demander si nécessaire.
+   */
+  async updateExamensComplementaires(id: string, examensComplementaires: string) {
+    try {
+      return await this.prisma.prescription.update({
+        where: { id },
+        data: { examensComplementaires },
+      });
+    } catch {
+      throw new NotFoundException(`Prescription ${id} introuvable`);
+    }
+  }
+
   async getMedecins() {
     return this.medecinsService.getEndoscopieMedecins();
   }
