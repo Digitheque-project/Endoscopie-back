@@ -1896,12 +1896,94 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
+    if (existing.prescriptionId && data.statut === 'Annulé' && data.motifRefus) {
+      await this.prisma.prescription.updateMany({
+        where: { id: existing.prescriptionId, serviceId },
+        data: { motifRefus: data.motifRefus },
+      });
+      // Fire-and-forget : un souci de communication avec le service externe ne doit
+      // jamais empêcher le médecin d'enregistrer son refus localement.
+      this.notifyExternalPrescriptionRefused(
+        existing.prescriptionId,
+        serviceId,
+        data.motifRefus,
+      ).catch((e) =>
+        this.logger.warn(
+          `Notification de refus échouée pour la prescription ${existing.prescriptionId}: ${e instanceof Error ? e.message : e}`,
+        ),
+      );
+    }
+
     const withMedecin = await this.medecinsService.attachMedecin(
       updated,
       'medecinId',
       'medecin',
     );
     return this.attachPatient(withMedecin);
+  }
+
+  /**
+   * Valeur de statut attendue par prescriptionback pour signifier un refus — non
+   * documentée côté Swagger externe, confirmée manuellement contre une demande de test
+   * (voir PATCH /prescriptions/endoscopie/:id/demandes/:id/statut).
+   */
+  private readonly EXTERNAL_REFUS_STATUT = 'REFUSEE';
+
+  /**
+   * Répercute le refus d'une demande d'examen vers le service prescription externe
+   * (source de vérité) et notifie le service qui a émis la demande (celui qui a le
+   * patient en charge) — cf. plan de la fonctionnalité "refus d'examen". Best-effort :
+   * un échec ici ne doit jamais faire échouer le refus local (voir l'appelant).
+   */
+  private async notifyExternalPrescriptionRefused(
+    prescriptionId: string,
+    serviceId: string,
+    motifRefus: string,
+  ) {
+    const { prescription, ext } = await this.ensurePrescriptionAnchor(
+      prescriptionId,
+      serviceId,
+    );
+    if (!ext) return;
+
+    if (prescription.externalId && ext.prescriptionExternalId) {
+      try {
+        const token =
+          getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+        const url = `${getPrescriptionExtApiUrl()}/endoscopie/${ext.prescriptionExternalId}/demandes/${prescription.externalId}/statut`;
+        const res = await fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: JSON.stringify({ statut: this.EXTERNAL_REFUS_STATUT, motif: motifRefus }),
+        });
+        if (!res.ok) {
+          this.logger.warn(
+            `PATCH statut demande externe ${res.status}: ${await res.text().catch(() => '')}`,
+          );
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Échec MAJ statut externe pour la demande ${prescription.externalId}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
+
+    if (ext.serviceIdSource) {
+      const patientLabel = ext.patientId ? `patient ${ext.patientId}` : 'un patient';
+      await this.notificationService.createNotification({
+        type: 'DEMANDE_EXAMEN_REFUSEE',
+        motif: `Demande d'examen (${ext.typeExamen}) refusée par Endoscopie pour ${patientLabel} : ${motifRefus}`,
+        patientId: ext.patientId,
+        entiteRefType: 'prescription',
+        entiteRefId: ext.prescriptionExternalId,
+        emitter: 'endoscopie-back',
+        emitterName: 'Endoscopie',
+        targetServiceId: ext.serviceIdSource,
+      });
+    }
   }
 
   /**

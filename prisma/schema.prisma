@@ -37,6 +37,9 @@ model Prescription {
   typeExamen          String               @default("Endoscopie")
   motif               String?
   examensComplementaires String?
+  // Raison écrite par le médecin Endoscopie en cas de refus (statut "Annulé"), pour
+  // rester consultable dans le Fil de prescription et transmise au service source.
+  motifRefus          String?
   priorite            String               @default("Standard")
   statut              String               @default("A planifier")
   dateDemande         DateTime             @default(now())

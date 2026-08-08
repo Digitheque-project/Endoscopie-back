@@ -18,4 +18,7 @@ export class UpdateRendezVousDto {
 
   @ApiPropertyOptional({ description: "Second examen réalisé dans la même séance (cas d'une double opération)", example: 'Coloscopie' })
   typeExamenSecondaire?: string;
+
+  @ApiPropertyOptional({ description: 'Raison du refus, requis quand statut passe à "Annulé" via le bouton Refuser', example: 'Contre-indication anesthésique non levée' })
+  motifRefus?: string;
 }

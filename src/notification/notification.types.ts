@@ -6,6 +6,11 @@ export type CreateNotificationPayload = {
   emitterName?: string;
   recipient?: string;
   recipientName?: string;
+  /**
+   * Service destinataire au sens de service-notification (serviceId, pas Endoscopie) —
+   * quand absent, la notification cible Endoscopie elle-même comme aujourd'hui.
+   */
+  targetServiceId?: string;
   departmentSource?: string;
   departmentTarget?: string;
   patientId?: string;

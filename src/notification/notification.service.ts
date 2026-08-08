@@ -27,8 +27,14 @@ export class NotificationService {
   async createNotification(
     payload: CreateNotificationPayload,
   ): Promise<unknown | null> {
+    const ownServiceId = getEndoscopieAuthServiceId() ?? getEndoscopieServiceId();
+    const targetServiceId = payload.targetServiceId ?? ownServiceId;
+    // Notification adressée à un AUTRE service (ex. refus d'examen renvoyé au service
+    // source) : ne jamais la pousser dans notre propre boîte locale, elle n'est pas
+    // pour nous.
+    const isForOwnService = targetServiceId === ownServiceId;
     const body = {
-      serviceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
+      serviceId: targetServiceId,
       title: payload.recipientName || payload.emitterName || 'Notification Endoscopie',
       message: payload.motif,
       type: payload.type || 'info',
@@ -54,19 +60,20 @@ export class NotificationService {
       if (!res.ok) {
         const text = await res.text();
         this.logger.warn(`POST /notifications/service ${res.status}: ${text}`);
-        this.pushToInbox({}, payload);
+        if (isForOwnService) this.pushToInbox({}, payload);
         return null;
       }
       const created = (await res.json()) as Record<string, unknown>;
-      this.pushToInbox(created, payload);
+      if (isForOwnService) this.pushToInbox(created, payload);
       return created;
     } catch (error) {
       this.logger.warn(
         `POST /notifications/service failed: ${error instanceof Error ? error.message : error}`,
       );
       // Le service externe est indisponible ou injoignable : on pousse quand même
-      // dans la boîte locale pour que la cloche/le flux temps réel restent fiables.
-      this.pushToInbox({}, payload);
+      // dans la boîte locale pour que la cloche/le flux temps réel restent fiables —
+      // uniquement si la notification nous était destinée.
+      if (isForOwnService) this.pushToInbox({}, payload);
       return null;
     }
   }
