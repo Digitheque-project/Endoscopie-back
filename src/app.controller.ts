@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -382,6 +383,25 @@ export class AppController {
     @Query('serviceId') serviceId?: string,
   ) {
     return this.appService.updateRendezVous(id, data, serviceId);
+  }
+
+  @Delete('api/rendezvous/:id')
+  @Roles('MAJOR')
+  @ApiTags('Rendez-vous')
+  @ApiOperation({
+    summary: '[DELETE] Supprimer un rendez-vous (réservé au rôle Major)',
+    description:
+      "Suppression définitive (pas juste une annulation de statut) — la prescription liée repasse " +
+      "automatiquement au statut « A planifier » pour rester replanifiable depuis le Fil de prescription.",
+    operationId: 'deleteRendezVous',
+  })
+  @ApiParam({ name: 'id', description: 'UUID du rendez-vous' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async deleteRendezVous(
+    @Param('id') id: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.deleteRendezVous(id, serviceId);
   }
 
   // ——— Salles ———

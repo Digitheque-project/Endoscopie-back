@@ -1904,6 +1904,32 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     return this.attachPatient(withMedecin);
   }
 
+  /**
+   * Suppression définitive d'un rendez-vous (pas une simple annulation de statut) — la
+   * prescription liée repasse à « A planifier » pour rester replanifiable depuis le Fil
+   * de prescription, plutôt que de rester bloquée sur « Planifié » sans rendez-vous réel.
+   */
+  async deleteRendezVous(id: string, serviceIdOverride?: string) {
+    const serviceId = this.getEndoscopieServiceId(serviceIdOverride);
+    const existing = await this.prisma.rendezVous.findFirst({
+      where: { id, serviceId },
+    });
+    if (!existing) {
+      throw new NotFoundException(`Rendez-vous ${id} introuvable`);
+    }
+
+    await this.prisma.rendezVous.delete({ where: { id } });
+
+    if (existing.prescriptionId) {
+      await this.prisma.prescription.updateMany({
+        where: { id: existing.prescriptionId, serviceId },
+        data: { statut: 'A planifier' },
+      });
+    }
+
+    return { success: true, id };
+  }
+
   async createSalle(data: any) {
     const serviceId = this.getEndoscopieServiceId(data.serviceId);
     const parsedCapacite = parseInt(data.capacite, 10);
