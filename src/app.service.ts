@@ -1918,7 +1918,16 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException(`Rendez-vous ${id} introuvable`);
     }
 
-    await this.prisma.rendezVous.delete({ where: { id } });
+    try {
+      await this.prisma.rendezVous.delete({ where: { id } });
+    } catch (e) {
+      // Déjà supprimé entre-temps (double clic, requête concurrente) : l'état final
+      // recherché (rendez-vous absent) est déjà atteint, pas une vraie erreur.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025') {
+        return { success: true, id };
+      }
+      throw e;
+    }
 
     if (existing.prescriptionId) {
       await this.prisma.prescription.updateMany({
