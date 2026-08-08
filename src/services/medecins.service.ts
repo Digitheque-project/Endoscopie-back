@@ -194,4 +194,73 @@ export class MedecinsService {
         Record<string, MedecinView | null>;
     });
   }
+
+  /**
+   * Résout un utilisateur par son id directement auprès du service utilisateurs
+   * centralisé, sans filtrer par service — contrairement à getEndoscopieMedecins() qui
+   * ne connaît que les médecins d'Endoscopie. Nécessaire pour le médecin PRESCRIPTEUR
+   * d'une demande d'examen : il appartient au service source (un autre service du CHU),
+   * jamais à Endoscopie, donc invisible de getEndoscopieMedecins().
+   */
+  async getUserById(id: string): Promise<MedecinView | null> {
+    const userServiceUrl = getUserServiceUrl();
+    if (!userServiceUrl) return null;
+    const token = getCurrentUserToken() ?? (await this.getServiceAccountToken());
+    if (!token) return null;
+
+    try {
+      const res = await fetch(`${userServiceUrl}/users/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return null;
+      const u = (await res.json()) as UserServiceUser;
+      return { id: u.id, nom: u.name, prenom: u.firstname, specialite: u.job ?? null };
+    } catch (e) {
+      this.logger.warn(
+        `Résolution utilisateur ${id} échouée: ${e instanceof Error ? e.message : e}`,
+      );
+      return null;
+    }
+  }
+
+  /** Attache le médecin prescripteur (service source, hors Endoscopie) à une seule ligne. */
+  async attachPrescripteur<T extends Record<string, unknown>>(
+    row: T,
+    idField: keyof T & string,
+    outField: string,
+  ): Promise<T & Record<string, MedecinView | null>> {
+    const id = row[idField] as unknown as string | null | undefined;
+    const found = id ? await this.getUserById(id) : null;
+    return { ...row, [outField]: found } as T & Record<string, MedecinView | null>;
+  }
+
+  /**
+   * Attache le médecin prescripteur à chaque ligne d'une liste — une requête par
+   * prescripteur DISTINCT (pas de route "par lot" côté service utilisateurs), pour
+   * éviter de refaire le même appel pour chaque examen d'un même prescripteur.
+   */
+  async attachPrescripteurs<T extends Record<string, unknown>>(
+    rows: T[],
+    idField: keyof T & string,
+    outField: string,
+  ): Promise<(T & Record<string, MedecinView | null>)[]> {
+    if (rows.length === 0) return [];
+    const ids = [
+      ...new Set(
+        rows
+          .map((r) => r[idField] as unknown as string | null | undefined)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const entries = await Promise.all(
+      ids.map(async (id) => [id, await this.getUserById(id)] as const),
+    );
+    const map = new Map(entries);
+    return rows.map((r) => {
+      const id = r[idField] as unknown as string | null | undefined;
+      return { ...r, [outField]: id ? map.get(id) ?? null : null } as T &
+        Record<string, MedecinView | null>;
+    });
+  }
 }

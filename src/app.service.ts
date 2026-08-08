@@ -178,7 +178,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           this.seenExternalPrescriptionIds.add(demande.id);
         }
         try {
-          const withMedecin = await this.medecinsService.attachMedecins(
+          const withMedecin = await this.medecinsService.attachPrescripteurs(
             demandes,
             'prescripteurId',
             'medecinPrescripteur',
@@ -469,7 +469,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       orderBy: { dateDemande: 'desc' },
     });
 
-    const withMedecin = await this.medecinsService.attachMedecins(
+    const withMedecin = await this.medecinsService.attachPrescripteurs(
       prescriptions,
       'medecinId',
       'medecinPrescripteur',
@@ -673,7 +673,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       this.prisma.rendezVous.findMany({ where: { patientId: id, serviceId } }),
       this.prisma.dossierCPA.findMany({ where: { patientId: id, serviceId } }),
     ]);
-    const prescriptions = await this.medecinsService.attachMedecins(
+    const prescriptions = await this.medecinsService.attachPrescripteurs(
       prescriptionsRaw,
       'medecinId',
       'medecinPrescripteur',
@@ -755,7 +755,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       };
     });
 
-    const withMedecin = await this.medecinsService.attachMedecins(
+    const withMedecin = await this.medecinsService.attachPrescripteurs(
       rows,
       'medecinId',
       'medecinPrescripteur',
@@ -906,7 +906,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         }
       : prescription;
 
-    const withMedecin = await this.medecinsService.attachMedecin(
+    const withMedecin = await this.medecinsService.attachPrescripteur(
       merged,
       'medecinId',
       'medecinPrescripteur',
@@ -2212,7 +2212,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       },
     });
     if (!prescriptionRaw) return;
-    const prescription = await this.medecinsService.attachMedecin(
+    const prescription = await this.medecinsService.attachPrescripteur(
       prescriptionRaw,
       'medecinId',
       'medecinPrescripteur',
@@ -2351,7 +2351,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     if (!resultat) throw new NotFoundException('Résultat non trouvé');
     if (!resultat.prescription) return resultat;
 
-    const prescriptionAvecMedecin = await this.medecinsService.attachMedecin(
+    const prescriptionAvecMedecin = await this.medecinsService.attachPrescripteur(
       resultat.prescription,
       'medecinId',
       'medecinPrescripteur',
@@ -2470,7 +2470,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       },
       orderBy: { dateDemande: 'desc' },
     });
-    const withMedecin = await this.medecinsService.attachMedecins(
+    const withMedecin = await this.medecinsService.attachPrescripteurs(
       prescriptions,
       'medecinId',
       'medecinPrescripteur',
@@ -2490,7 +2490,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     if (!prescriptionRaw) {
       throw new NotFoundException(`Confirmation pour prescription ${prescriptionId} introuvable`);
     }
-    const prescription = await this.medecinsService.attachMedecin(
+    const prescription = await this.medecinsService.attachPrescripteur(
       prescriptionRaw,
       'medecinId',
       'medecinPrescripteur',
