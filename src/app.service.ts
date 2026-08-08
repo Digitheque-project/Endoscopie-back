@@ -746,6 +746,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         // Le statut est un état de workflow qui nous appartient une fois la prescription
         // ouverte localement — sinon, valeur de départ dérivée du statut externe.
         statut: local?.statut ?? this.mapExternalStatut(ext.statut),
+        motifRefus: local?.motifRefus ?? null,
         dateDemande: ext.createdAt ? new Date(ext.createdAt) : new Date(),
         serviceId,
         rendezVous: local?.rendezVous ?? null,
