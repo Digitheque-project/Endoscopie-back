@@ -2259,9 +2259,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       where: { prescriptionId, ...this.scope(serviceIdOverride) },
     });
     if (!resultat) return null;
+    // `details` regroupe en JSON tout ce qui n'est pas une colonne dédiée (responsable,
+    // endoscopistes, constatations par organe...) — voir saveResultat. On le déplie à la
+    // racine pour que le formulaire retrouve ces champs là où il les a envoyés (sinon
+    // seule `observations`, vraie colonne, survivait au rechargement du compte rendu).
+    const details = resultat.details ? JSON.parse(resultat.details) : {};
     return this.attachPatient({
       ...resultat,
-      details: resultat.details ? JSON.parse(resultat.details) : undefined,
+      ...details,
+      details,
     });
   }
 
