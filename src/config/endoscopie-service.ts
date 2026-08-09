@@ -40,14 +40,22 @@ export function getAccueilApiUrl(): string {
   return requireEnv('ACCUEIL_API_URL');
 }
 
-/** URL de l'API du service Bloc Opératoire (intégration CPA/VPA). */
+/**
+ * URL de l'API du service Bloc Opératoire (intégration CPA/VPA). BLOC_API_URL ne
+ * contient que l'origine (ex. https://bloc-prud.onrender.com) — le chemin de l'API
+ * (/bloc/api) est ajouté ici, pas dans le .env.
+ */
 export function getBlocApiUrl(): string | null {
-  return process.env.BLOC_API_URL?.replace(/\/$/, '') || null;
+  const base = process.env.BLOC_API_URL?.trim().replace(/\/$/, '');
+  return base ? `${base}/bloc/api` : null;
 }
 
-/** URL de l'API prescription mutualisée du CHU. */
+/**
+ * URL de l'API prescription mutualisée du CHU. PRESCRIPTION_EXT_API_URL ne contient
+ * que l'origine — le chemin de l'API (/prescriptions) est ajouté ici, pas dans le .env.
+ */
 export function getPrescriptionExtApiUrl(): string {
-  return requireEnv('PRESCRIPTION_EXT_API_URL');
+  return `${requireEnv('PRESCRIPTION_EXT_API_URL')}/prescriptions`;
 }
 
 /**
@@ -56,9 +64,12 @@ export function getPrescriptionExtApiUrl(): string {
  * exige son propre token (distinct du JWT de l'écosystème d'authentification partagé),
  * que nous n'avons pas encore ; les appels échoueront donc en 401 tant qu'il ne nous
  * aura pas été fourni. Le code appelant doit rester silencieux dans ce cas.
+ * DOSSIER_PATIENT_API_URL ne contient que l'origine — le chemin de l'API
+ * (/dossier-patient) est ajouté ici, pas dans le .env.
  */
 export function getDossierPatientApiUrl(): string | null {
-  return process.env.DOSSIER_PATIENT_API_URL?.trim().replace(/\/$/, '') || null;
+  const base = process.env.DOSSIER_PATIENT_API_URL?.trim().replace(/\/$/, '');
+  return base ? `${base}/dossier-patient` : null;
 }
 
 /**
