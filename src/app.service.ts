@@ -117,6 +117,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private seenExternalPrescriptionIds: Set<string> | null = null;
   private prescriptionWatcherInterval: ReturnType<typeof setInterval> | null = null;
   private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 3000;
+  /** Fenêtre de rattrapage au démarrage — voir onModuleInit. */
+  private readonly NOTIFICATION_CATCHUP_WINDOW_MS = 60 * 60 * 1000;
   private isPollingPrescriptions = false;
 
   constructor(
@@ -133,9 +135,28 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Amorce la liste des demandes déjà connues au démarrage, pour ne notifier que les
     // VRAIES nouvelles arrivées et éviter une salve de notifications pour tout ce qui
     // existait déjà avant le lancement du serveur.
+    //
+    // Fenêtre de rattrapage : sur Render (offre gratuite), le service s'endort après
+    // inactivité et redémarre à froid à la requête suivante — sans ça, toute demande
+    // arrivée pendant le sommeil serait marquée "déjà vue" ici et ne serait JAMAIS
+    // notifiée (la boîte de notifications, elle aussi en mémoire, repart de zéro à
+    // chaque redémarrage). On ne marque donc "déjà vu" que ce qui est réellement
+    // ancien ; ce qui est arrivé dans les NOTIFICATION_CATCHUP_WINDOW_MS dernières
+    // minutes reste "nouveau" pour le premier poll, qui le notifiera normalement.
     try {
       const existing = await this.fetchExternalPrescriptions();
-      this.seenExternalPrescriptionIds = new Set(existing.map((p) => p.id).filter(Boolean));
+      const cutoff = Date.now() - this.NOTIFICATION_CATCHUP_WINDOW_MS;
+      this.seenExternalPrescriptionIds = new Set(
+        existing
+          .filter((p) => {
+            const t = p.createdAt ? Date.parse(p.createdAt) : NaN;
+            // Date manquante/invalide : on la traite prudemment comme "ancienne" (déjà vue),
+            // pour ne jamais renotifier tout un historique dont on ne connaît pas l'âge.
+            return !Number.isFinite(t) || t < cutoff;
+          })
+          .map((p) => p.id)
+          .filter(Boolean),
+      );
     } catch (e) {
       this.seenExternalPrescriptionIds = new Set();
       this.logger.warn(`Amorçage du watcher de prescriptions échoué: ${e instanceof Error ? e.message : e}`);
