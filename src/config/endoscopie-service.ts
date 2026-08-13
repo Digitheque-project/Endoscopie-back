@@ -36,6 +36,15 @@ export function getChuApiUrl(): string {
   return requireEnv('CHU_API_URL');
 }
 
+/**
+ * Registre central des services CHU — GET /services/:id (authentifié) y résout un
+ * serviceId en son nom lisible (ex. "Chirurgie", "Endoscopie"). Optionnel : si absent,
+ * le code appelant doit rester silencieux (voir resolveServiceName dans app.service.ts).
+ */
+export function getServiceRegistryApiUrl(): string | null {
+  return process.env.SERVICE_REGISTRY_API_URL?.trim().replace(/\/$/, '') || null;
+}
+
 export function getAccueilApiUrl(): string {
   return requireEnv('ACCUEIL_API_URL');
 }

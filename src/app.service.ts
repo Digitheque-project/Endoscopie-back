@@ -19,6 +19,7 @@ import {
   getEndoscopieAuthChuId,
   getEndoscopieAuthServiceId,
   getPrescriptionExtApiUrl,
+  getServiceRegistryApiUrl,
 } from './config/endoscopie-service';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
@@ -113,6 +114,9 @@ type FlatExternalDemande = {
 export class AppService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AppService.name);
   private accueilCache: { patients: AccueilPatientRaw[]; expiresAt: number } | null = null;
+  /** Cache court des noms de service résolus via le registre central — voir resolveServiceName. */
+  private readonly serviceNameCache = new Map<string, { name: string | null; expiresAt: number }>();
+  private readonly SERVICE_NAME_CACHE_TTL_MS = 10 * 60 * 1000;
 
   /** IDs de demandes externes déjà vus — en mémoire uniquement, jamais persisté — pour ne
    *  notifier que les VRAIES nouvelles arrivées. Le service prescription externe n'expose
@@ -575,6 +579,40 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Résout le nom lisible d'un service (ex. "Chirurgie") depuis son id, via le registre
+   * central des services CHU (SERVICE_REGISTRY_API_URL, GET /services/:id, authentifié).
+   * Utilisé pour afficher le service prescripteur (serviceIdSource) dans le détail d'une
+   * prescription. Optionnel et silencieux : renvoie null si le registre n'est pas
+   * configuré, injoignable, ou si le service est introuvable — ne doit jamais faire
+   * échouer l'affichage du détail pour autant. Cache 10 min, un service ne renomme pas.
+   */
+  private async resolveServiceName(serviceId: string | null | undefined): Promise<string | null> {
+    if (!serviceId) return null;
+    const registryUrl = getServiceRegistryApiUrl();
+    if (!registryUrl) return null;
+
+    const cached = this.serviceNameCache.get(serviceId);
+    if (cached && Date.now() < cached.expiresAt) return cached.name;
+
+    try {
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+      if (!token) return null;
+      const res = await fetch(`${registryUrl}/services/${encodeURIComponent(serviceId)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      const name = res.ok ? ((await res.json()) as { name?: string }).name ?? null : null;
+      this.serviceNameCache.set(serviceId, { name, expiresAt: Date.now() + this.SERVICE_NAME_CACHE_TTL_MS });
+      return name;
+    } catch (e) {
+      this.logger.warn(
+        `Résolution du service ${serviceId} échouée: ${e instanceof Error ? e.message : e}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Liste complète des patients du CHU (cache 60 s pour éviter les cold-start lents).
    * Comme pour les prescriptions, le registre Accueil tague les patients avec
    * ENDOSCOPIE_CHU_ID ou ENDOSCOPIE_AUTH_CHU_ID selon la source d'enregistrement —
@@ -920,6 +958,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       include,
     });
 
+    // Service prescripteur (ex. "Chirurgie") affiché dans le détail — résolu depuis
+    // serviceIdSource, seulement quand on a une prescription externe à afficher.
+    const serviceSourceName = ext ? await this.resolveServiceName(ext.serviceIdSource) : null;
+
     const merged = ext
       ? {
           ...prescription,
@@ -930,8 +972,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           motif: ext.renseignements || ext.remarques || '',
           priorite: this.mapUrgenceToPriorite(ext.urgence),
           dateDemande: ext.createdAt ? new Date(ext.createdAt) : prescription.dateDemande,
+          serviceSourceName,
         }
-      : prescription;
+      : { ...prescription, serviceSourceName };
 
     const withMedecin = await this.medecinsService.attachPrescripteur(
       merged,
