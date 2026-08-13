@@ -55,6 +55,16 @@ model Prescription {
   @@index([patientId])
 }
 
+// Trace durable des demandes externes déjà notifiées (DEMANDE_EXAMEN) — évite de
+// renotifier la même demande à chaque redémarrage du serveur (Render endort le service
+// après inactivité et le redémarre à froid ; sans cette table, une fenêtre de rattrapage
+// en mémoire seule pouvait re-détecter comme "nouvelle" une demande déjà notifiée juste
+// avant un redémarrage). Purement une trace d'idempotence, jamais lue ailleurs.
+model NotifiedPrescription {
+  externalId String   @id
+  notifiedAt DateTime @default(now())
+}
+
 model NoteDossier {
   id             String       @id @default(uuid())
   prescriptionId String

@@ -217,4 +217,46 @@ export class NotificationService {
       },
     });
   }
+
+  /**
+   * Prévient le médecin qu'un rendez-vous vient d'être planifié pour une de ses
+   * prescriptions — le patient est désormais prêt pour sa décision d'anesthésie
+   * ("À décider" dans le Fil de prescription). Origine interne (le major vient de
+   * planifier depuis notre propre app), à distinguer côté front des notifications
+   * d'origine externe (CPA_RESULTAT/VPA_REALISEE, en provenance du Bloc Opératoire).
+   */
+  async notifyRendezVousPlanned(rdv: {
+    prescriptionId: string;
+    patientId?: string | null;
+    typeExamen?: string | null;
+    patient?: { nom: string; prenom: string } | null;
+  }): Promise<unknown | null> {
+    const patientName = rdv.patient
+      ? `${rdv.patient.prenom} ${rdv.patient.nom}`.trim()
+      : 'Patient';
+    const typeExamenLabel = rdv.typeExamen || 'Examen';
+
+    return this.createNotification({
+      type: 'RENDEZ_VOUS',
+      motif: `Rendez-vous planifié — ${typeExamenLabel} (${patientName})`,
+      urgence: 2,
+      emitter: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
+      emitterName: 'Unité Endoscopie',
+      recipient: 'endoscopie-medecin',
+      recipientName: 'Médecin Endoscopie',
+      departmentSource: 'Endoscopie',
+      departmentTarget: 'Médecin',
+      patientId: rdv.patientId ?? undefined,
+      entiteRefType: 'Prescription',
+      entiteRefId: rdv.prescriptionId,
+      channels: ['INTERNAL', 'SOUND'],
+      payload: {
+        sourceServiceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
+        sourceServiceName: 'Unité Endoscopie',
+        patientName,
+        typeExamen: typeExamenLabel,
+        origin: 'interne',
+      },
+    });
+  }
 }

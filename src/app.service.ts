@@ -118,15 +118,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private readonly serviceNameCache = new Map<string, { name: string | null; expiresAt: number }>();
   private readonly SERVICE_NAME_CACHE_TTL_MS = 10 * 60 * 1000;
 
-  /** IDs de demandes externes déjà vus — en mémoire uniquement, jamais persisté — pour ne
-   *  notifier que les VRAIES nouvelles arrivées. Le service prescription externe n'expose
-   *  aucun webhook pour nous prévenir lui-même (vérifié sur son Swagger) : le polling reste
-   *  le seul moyen de détecter une nouvelle prescription. */
+  /** IDs de demandes externes déjà notifiées — cache mémoire du contenu de la table
+   *  NotifiedPrescription (persistée), pour éviter une requête DB à chaque poll de 3s.
+   *  Le service prescription externe n'expose aucun webhook pour nous prévenir lui-même
+   *  (vérifié sur son Swagger) : le polling reste le seul moyen de détecter une nouvelle
+   *  prescription. */
   private seenExternalPrescriptionIds: Set<string> | null = null;
   private prescriptionWatcherInterval: ReturnType<typeof setInterval> | null = null;
   private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 3000;
-  /** Fenêtre de rattrapage au démarrage — voir onModuleInit. */
-  private readonly NOTIFICATION_CATCHUP_WINDOW_MS = 60 * 60 * 1000;
   private isPollingPrescriptions = false;
 
   constructor(
@@ -140,31 +139,33 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit() {
-    // Amorce la liste des demandes déjà connues au démarrage, pour ne notifier que les
-    // VRAIES nouvelles arrivées et éviter une salve de notifications pour tout ce qui
-    // existait déjà avant le lancement du serveur.
-    //
-    // Fenêtre de rattrapage : sur Render (offre gratuite), le service s'endort après
-    // inactivité et redémarre à froid à la requête suivante — sans ça, toute demande
-    // arrivée pendant le sommeil serait marquée "déjà vue" ici et ne serait JAMAIS
-    // notifiée (la boîte de notifications, elle aussi en mémoire, repart de zéro à
-    // chaque redémarrage). On ne marque donc "déjà vu" que ce qui est réellement
-    // ancien ; ce qui est arrivé dans les NOTIFICATION_CATCHUP_WINDOW_MS dernières
-    // minutes reste "nouveau" pour le premier poll, qui le notifiera normalement.
+    // Amorce la liste des demandes déjà notifiées depuis la table persistée
+    // NotifiedPrescription — contrairement à un simple Set en mémoire (perdu à chaque
+    // redémarrage), ceci survit aux redémarrages à froid fréquents sur Render (offre
+    // gratuite, service endormi après inactivité) : une demande déjà notifiée avant un
+    // redémarrage ne l'est plus jamais une seconde fois, et une demande réellement
+    // arrivée pendant le sommeil reste "nouvelle" pour le premier poll qui suit.
     try {
-      const existing = await this.fetchExternalPrescriptions();
-      const cutoff = Date.now() - this.NOTIFICATION_CATCHUP_WINDOW_MS;
-      this.seenExternalPrescriptionIds = new Set(
-        existing
-          .filter((p) => {
-            const t = p.createdAt ? Date.parse(p.createdAt) : NaN;
-            // Date manquante/invalide : on la traite prudemment comme "ancienne" (déjà vue),
-            // pour ne jamais renotifier tout un historique dont on ne connaît pas l'âge.
-            return !Number.isFinite(t) || t < cutoff;
-          })
-          .map((p) => p.id)
-          .filter(Boolean),
-      );
+      const count = await this.prisma.notifiedPrescription.count();
+      if (count === 0) {
+        // Table vide : soit tout premier démarrage, soit champ tout juste ajouté sur une
+        // base existante. On amorce silencieusement avec l'historique externe déjà là,
+        // sans déclencher de salve de notifications rétroactive.
+        const existing = await this.fetchExternalPrescriptions();
+        const ids = [...new Set(existing.map((p) => p.id).filter(Boolean))];
+        if (ids.length) {
+          await this.prisma.notifiedPrescription.createMany({
+            data: ids.map((externalId) => ({ externalId })),
+            skipDuplicates: true,
+          });
+        }
+        this.seenExternalPrescriptionIds = new Set(ids);
+      } else {
+        const notified = await this.prisma.notifiedPrescription.findMany({
+          select: { externalId: true },
+        });
+        this.seenExternalPrescriptionIds = new Set(notified.map((n) => n.externalId));
+      }
     } catch (e) {
       this.seenExternalPrescriptionIds = new Set();
       this.logger.warn(`Amorçage du watcher de prescriptions échoué: ${e instanceof Error ? e.message : e}`);
@@ -205,6 +206,19 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       for (const demandes of groups.values()) {
         for (const demande of demandes) {
           this.seenExternalPrescriptionIds.add(demande.id);
+        }
+        // Marqué "notifié" en DB avant même l'envoi : si l'envoi échoue plus bas (catch),
+        // on ne veut de toute façon pas réessayer indéfiniment à chaque poll — même
+        // logique déjà en place pour le Set mémoire ci-dessus.
+        try {
+          await this.prisma.notifiedPrescription.createMany({
+            data: demandes.map((d) => ({ externalId: d.id })),
+            skipDuplicates: true,
+          });
+        } catch (e) {
+          this.logger.warn(
+            `Persistance "déjà notifié" échouée pour ${demandes[0]?.id}: ${e instanceof Error ? e.message : e}`,
+          );
         }
         try {
           const withMedecin = await this.medecinsService.attachPrescripteurs(
@@ -1675,16 +1689,34 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
       if (resolvedPrescriptionId) {
         // Cas 1: Mise à jour via prescriptionId (UPSERT)
+        // Notifier le médecin seulement à la PREMIÈRE planification — une replanification
+        // (changement d'heure/salle) ne doit pas le renotifier à chaque fois, seul le
+        // passage "prêt pour décision" l'intéresse.
+        const existingRdv = await this.prisma.rendezVous.findUnique({
+          where: { prescriptionId: resolvedPrescriptionId },
+          select: { id: true },
+        });
+
         await this.prisma.prescription.updateMany({
           where: { id: resolvedPrescriptionId, serviceId },
           data: { statut: 'Planifié' },
         });
 
-        return await this.prisma.rendezVous.upsert({
+        const rdv = await this.prisma.rendezVous.upsert({
           where: { prescriptionId: resolvedPrescriptionId },
           update: rendezVousPayload,
           create: rendezVousPayload,
         });
+
+        if (!existingRdv) {
+          this.notifyPatientPlanifie(resolvedPrescriptionId, data).catch((e) => {
+            this.logger.warn(
+              `Notification "rendez-vous planifié" échouée pour ${resolvedPrescriptionId}: ${e instanceof Error ? e.message : e}`,
+            );
+          });
+        }
+
+        return rdv;
       }
 
       const created = await this.prisma.rendezVous.create({
@@ -1707,6 +1739,22 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       console.error('Erreur lors de la création du rendez-vous:', error);
       throw error;
     }
+  }
+
+  /** Résout patient + type d'examen pour notifier le médecin qu'un rendez-vous vient d'être planifié. */
+  private async notifyPatientPlanifie(prescriptionId: string, data: any): Promise<void> {
+    const prescription = await this.prisma.prescription.findUnique({
+      where: { id: prescriptionId },
+      select: { patientId: true, typeExamen: true },
+    });
+    const patientId = data.patientId || prescription?.patientId || null;
+    const accueilPatient = patientId ? await this.getAccueilPatient(patientId) : null;
+    await this.notificationService.notifyRendezVousPlanned({
+      prescriptionId,
+      patientId,
+      typeExamen: data.typeExamen || data.procedure || prescription?.typeExamen || null,
+      patient: accueilPatient ? { nom: accueilPatient.nom, prenom: accueilPatient.prenom || '' } : null,
+    });
   }
 
   /**
