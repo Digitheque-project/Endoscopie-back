@@ -57,6 +57,10 @@ interface ExternalEndoscopieDemande {
   prescriptionId: string;
   typeExamen: string;
   autreExamen?: string | null;
+  // Renseignements cliniques propres à CET examen (voir DemandeEndoscopieDto côté service
+  // prescription) — distinct de `renseignements` sur ExternalEndoscopiePrescription, qui
+  // est le renseignement général de la prescription, partagé par tous ses examens.
+  renseignementsCliniques?: string | null;
   statut?: string | null;
   motifRefus?: string | null;
   createdAt?: string | null;
@@ -296,7 +300,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
             patientId: p.patientId,
             prescripteurId: p.prescripteurId,
             typeExamen: d.typeExamen || d.autreExamen || 'Endoscopie',
-            renseignements: p.renseignements,
+            // Renseignement clinique propre à cet examen en priorité — repli sur le
+            // renseignement général de la prescription (partagé) s'il n'est pas renseigné.
+            renseignements: d.renseignementsCliniques || p.renseignements,
             urgence: p.urgence,
             alertes: p.alertes,
             remarques: p.remarques,
