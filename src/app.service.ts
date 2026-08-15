@@ -2473,14 +2473,22 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       include: { prescription: true },
     });
     if (!resultat) throw new NotFoundException('Résultat non trouvé');
-    if (!resultat.prescription) return resultat;
+
+    // Même dépliage que getResultat (voir ce commentaire) : sans ça, seules les
+    // colonnes dédiées (observations, conclusion...) survivaient — tout le reste
+    // (responsable, endoscope(s), constatations par organe...) restait coincé dans le
+    // JSON brut `details` côté consommateur du lien public.
+    const details = resultat.details ? JSON.parse(resultat.details) : {};
+    const flattened = { ...resultat, ...details, details };
+
+    if (!resultat.prescription) return flattened;
 
     const prescriptionAvecMedecin = await this.medecinsService.attachPrescripteur(
       resultat.prescription,
       'medecinId',
       'medecinPrescripteur',
     );
-    return { ...resultat, prescription: prescriptionAvecMedecin };
+    return { ...flattened, prescription: prescriptionAvecMedecin };
   }
 
   async revokePublicShareLink(prescriptionId: string) {

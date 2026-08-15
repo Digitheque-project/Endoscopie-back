@@ -85,10 +85,11 @@ export class ExternalApiController {
       throw new NotFoundException(`Prescription ${prescriptionId} introuvable`);
     }
 
+    // Le prescripteur appartient au service source de la demande, pas à Endoscopie —
+    // recherche cross-service (voir getUserById), pas le répertoire Endoscopie seul
+    // (qui ne le trouverait quasiment jamais et renverrait "N/A").
     const medecinPrescripteur = prescription.medecinId
-      ? (await this.medecinsService.getEndoscopieMedecins()).find(
-          (m) => m.id === prescription.medecinId,
-        ) ?? null
+      ? await this.medecinsService.getUserById(prescription.medecinId)
       : null;
 
     // Vérifier que le résultat est disponible
