@@ -843,9 +843,16 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Prescriptions sans compte-rendu enregistré, dès lors que :
-   *  - la checklist après est validée (examen terminé normalement), OU
-   *  - une opération a été commencée (panne électrique / interruption en cours).
+   * Prescriptions pas encore complètement "Terminé" (compte-rendu enregistré ET
+   * checklist après validée — voir markTermineIfComplete), dès lors qu'un début
+   * d'activité existe déjà :
+   *  - la checklist après est validée (examen terminé normalement, compte-rendu
+   *    restant à écrire), OU
+   *  - une opération a été commencée (panne électrique / interruption en cours), OU
+   *  - le compte-rendu est déjà écrit mais la checklist après ne l'est pas (le
+   *    médecin a rédigé le compte-rendu avant de finaliser la checklist — sans ce
+   *    cas, l'examen restait invisible : plus dans "en attente" [déjà un résultat]
+   *    ni dans l'Archive [statut jamais passé à "Terminé"]).
    * Reconstruit à partir de getPrescriptions() (live) plutôt qu'une lecture locale brute,
    * pour rester cohérent avec le reste de l'architecture — seules operationEndoscopie et
    * resultatEndoscopie (absents de getPrescriptions, inutiles ailleurs) sont requêtés
@@ -870,9 +877,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const hasResultat = new Set(withResultat.map((r) => r.prescriptionId));
 
     return prescriptions
-      .filter(
-        (p) => !hasResultat.has(p.id) && (p.checklistApres?.estValide || hasOperation.has(p.id)),
-      )
+      .filter((p) => {
+        const checklistValide = !!p.checklistApres?.estValide;
+        const isTermine = hasResultat.has(p.id) && checklistValide;
+        const hasStarted = hasOperation.has(p.id) || hasResultat.has(p.id) || checklistValide;
+        return !isTermine && hasStarted;
+      })
+      .map((p) => ({ ...p, hasResultat: hasResultat.has(p.id) }))
       .sort((a, b) => new Date(b.dateDemande).getTime() - new Date(a.dateDemande).getTime());
   }
 
