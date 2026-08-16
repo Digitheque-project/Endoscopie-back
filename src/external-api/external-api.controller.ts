@@ -27,11 +27,13 @@ import { ExternalApiService } from '../services/external-api.service';
 import { MedecinsService } from '../services/medecins.service';
 import {
   ResultatExamenExterneDto,
+  RendezVousExterneDto,
   CreateServiceExterneDto,
   ServiceExterneResponseDto,
   UpdateServiceExterneDto,
 } from '../dto/resultat-examen-externe.dto';
 import { Roles } from '../auth/roles.decorator';
+import { getEndoscopieServiceId } from '../config/endoscopie-service';
 
 @Controller()
 export class ExternalApiController {
@@ -123,6 +125,71 @@ export class ExternalApiController {
         : 'N/A',
       dateResultat: prescription.resultatEndoscopie.dateCreation.toISOString(),
     };
+  }
+
+  /**
+   * ========== ENDPOINT PUBLIC ==========
+   * Accès par services externes avec clé API — rendez-vous d'Endoscopie, pour que
+   * d'autres services du CHU (Accueil, Hospitalisation...) puissent suivre la
+   * disponibilité du service ou tracer le passage d'un patient, sans exposer le détail
+   * médical (voir getResultatExterne pour le compte-rendu, séparé et non concerné ici).
+   */
+  @Get('api/rendezvous/externe')
+  @ApiTags('Accès externe — Services cliniques')
+  @ApiOperation({
+    summary: 'Lister les rendez-vous d\'endoscopie — accès service externe',
+    description:
+      'Endpoint sécurisé pour que d\'autres services du CHU (Accueil, Hospitalisation...) ' +
+      'suivent la disponibilité d\'Endoscopie ou tracent le passage d\'un patient, avec une clé API valide.',
+  })
+  @ApiHeader({ name: 'x-api-key', description: 'Clé API du service externe', required: true })
+  @ApiQuery({ name: 'patientId', required: false, description: 'Filtre sur un patient précis (traçage)' })
+  @ApiQuery({ name: 'from', required: false, description: 'Date/heure de début minimale (ISO 8601)' })
+  @ApiQuery({ name: 'to', required: false, description: 'Date/heure de début maximale (ISO 8601)' })
+  @ApiResponse({ status: 200, type: [RendezVousExterneDto] })
+  @ApiResponse({ status: 401, description: 'Clé API invalide ou absente' })
+  async getRendezVousExterne(
+    @Headers('x-api-key') apiKey?: string,
+    @Query('patientId') patientId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ): Promise<RendezVousExterneDto[]> {
+    if (!apiKey) {
+      throw new BadRequestException('Clé API manquante dans le header x-api-key');
+    }
+    const service = await this.externalApiService.validateApiKey(apiKey);
+
+    const where: Record<string, unknown> = { serviceId: getEndoscopieServiceId() };
+    if (patientId) where.patientId = patientId;
+    const dateHeureDebut: Record<string, Date> = {};
+    if (from) dateHeureDebut.gte = new Date(from);
+    if (to) dateHeureDebut.lte = new Date(to);
+    if (Object.keys(dateHeureDebut).length) where.dateHeureDebut = dateHeureDebut;
+
+    // Repli sur les 90 prochains jours quand aucun filtre n'est fourni — pas de dump
+    // intégral de l'historique par défaut.
+    if (!patientId && !from && !to) {
+      where.dateHeureDebut = { gte: new Date() };
+    }
+
+    const rendezVous = await this.prisma.rendezVous.findMany({
+      where,
+      include: { salle: true, prescription: true },
+      orderBy: { dateHeureDebut: 'asc' },
+      take: 200,
+    });
+
+    await this.externalApiService.logAccess(service.id, 'LIST', patientId || 'ALL', 200);
+
+    return rendezVous.map((rdv) => ({
+      id: rdv.id,
+      patientId: rdv.patientId,
+      dateHeureDebut: rdv.dateHeureDebut.toISOString(),
+      dateHeureFin: rdv.dateHeureFin ? rdv.dateHeureFin.toISOString() : null,
+      salle: rdv.salle?.nom ?? null,
+      statut: rdv.statut,
+      typeExamen: rdv.prescription?.typeExamen ?? null,
+    }));
   }
 
   private parseResultats(detailsJson: string): any {

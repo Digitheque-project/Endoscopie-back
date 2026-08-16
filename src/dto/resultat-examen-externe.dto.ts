@@ -62,6 +62,29 @@ export class ResultatExamenExterneDto {
   dateResultat: string;
 }
 
+export class RendezVousExterneDto {
+  @ApiProperty({ example: 'a1b2c3d4-...' })
+  id: string;
+
+  @ApiProperty({ example: 'a1b2c3d4-...', nullable: true })
+  patientId: string | null;
+
+  @ApiProperty({ example: '2026-08-20T08:30:00.000Z' })
+  dateHeureDebut: string;
+
+  @ApiProperty({ example: '2026-08-20T09:00:00.000Z', nullable: true })
+  dateHeureFin: string | null;
+
+  @ApiProperty({ example: 'Salle 2', nullable: true })
+  salle: string | null;
+
+  @ApiProperty({ example: 'Confirmé' })
+  statut: string;
+
+  @ApiProperty({ example: 'Fibroscopie digestive haute', nullable: true })
+  typeExamen: string | null;
+}
+
 export class CreateServiceExterneDto {
   @ApiProperty({ example: 'Radiologie Générale' })
   nom: string;
