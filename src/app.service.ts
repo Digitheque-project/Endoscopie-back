@@ -843,16 +843,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Prescriptions pas encore complètement "Terminé" (compte-rendu enregistré ET
-   * checklist après validée — voir markTermineIfComplete), dès lors qu'un début
-   * d'activité existe déjà :
+   * Prescriptions pas encore "Terminé" (compte-rendu enregistré — voir
+   * markTermineIfComplete), dès lors qu'un début d'activité existe déjà :
    *  - la checklist après est validée (examen terminé normalement, compte-rendu
    *    restant à écrire), OU
-   *  - une opération a été commencée (panne électrique / interruption en cours), OU
-   *  - le compte-rendu est déjà écrit mais la checklist après ne l'est pas (le
-   *    médecin a rédigé le compte-rendu avant de finaliser la checklist — sans ce
-   *    cas, l'examen restait invisible : plus dans "en attente" [déjà un résultat]
-   *    ni dans l'Archive [statut jamais passé à "Terminé"]).
+   *  - une opération a été commencée (panne électrique / interruption en cours).
    * Reconstruit à partir de getPrescriptions() (live) plutôt qu'une lecture locale brute,
    * pour rester cohérent avec le reste de l'architecture — seules operationEndoscopie et
    * resultatEndoscopie (absents de getPrescriptions, inutiles ailleurs) sont requêtés
@@ -879,8 +874,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     return prescriptions
       .filter((p) => {
         const checklistValide = !!p.checklistApres?.estValide;
-        const isTermine = hasResultat.has(p.id) && checklistValide;
-        const hasStarted = hasOperation.has(p.id) || hasResultat.has(p.id) || checklistValide;
+        const isTermine = hasResultat.has(p.id);
+        const hasStarted = hasOperation.has(p.id) || checklistValide;
         return !isTermine && hasStarted;
       })
       .map((p) => ({ ...p, hasResultat: hasResultat.has(p.id) }))
@@ -2327,9 +2322,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Marque la prescription (et son rendez-vous) "Terminé" dès que la checklist
-   * après-examen est validée ET que le compte rendu existe — signal fiable réutilisé
-   * par l'archive et le rapport, au lieu de le redéduire à chaque affichage.
+   * Marque la prescription (et son rendez-vous) "Terminé" dès que le compte rendu est
+   * enregistré — signal fiable réutilisé par l'archive et le rapport, au lieu de le
+   * redéduire à chaque affichage. La checklist après n'est plus une condition
+   * bloquante : un compte rendu enregistré marque la fin de l'opération pour le Major
+   * (Fil de travail) même si la checklist après n'a pas encore été validée séparément.
    */
   private async markTermineIfComplete(prescriptionId: string) {
     const prescriptionRaw = await this.prisma.prescription.findUnique({
@@ -2346,7 +2343,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       'medecinId',
       'medecinPrescripteur',
     );
-    if (!prescription.checklistApres?.estValide || !prescription.resultatEndoscopie) return;
+    if (!prescription.resultatEndoscopie) return;
     if (prescription.statut === 'Terminé') return;
 
     await this.prisma.prescription.update({
