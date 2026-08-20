@@ -136,8 +136,12 @@ model ChecklistAvant {
   serviceId             String
   dateCreation          DateTime     @default(now())
   dateModification      DateTime     @updatedAt
-  antibioprophylaxie    Boolean      @default(false)
-  anticoagulantsArretes Boolean      @default(false)
+  // "OUI" / "NON" / "NA" — stockés en texte (pas Boolean) car ces deux items proposent
+  // un bouton "NA" dans le formulaire ; un simple booléen ne pouvait pas le distinguer
+  // de "NON", ce qui faisait perdre le choix "NA" au rechargement et empêchait la
+  // checklist d'être jamais marquée "valide" quand un item ne s'applique pas au patient.
+  antibioprophylaxie    String?
+  anticoagulantsArretes String?
   constantes_pouls      String?
   constantes_saturation String?
   constantes_tension    String?

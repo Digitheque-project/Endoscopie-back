@@ -2192,8 +2192,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       jeuneRespecte: !!data.jeuneRespecte,
       preparationAdequate: !!data.preparationAdequate,
       validationCollegiale: !!data.validationCollegiale,
-      anticoagulantsArretes: !!data.anticoagulantsArretes,
-      antibioprophylaxie: !!data.antibioprophylaxie,
+      // "OUI" / "NON" / "NA" — pas de coercion booléenne ici (voir schema.prisma) : ces
+      // deux items proposent un bouton "NA" (non applicable au patient), qu'un simple
+      // !!valeur écraserait en "NON" côté affichage comme en base.
+      anticoagulantsArretes: data.anticoagulantsArretes || null,
+      antibioprophylaxie: data.antibioprophylaxie || null,
       tenueAppropriee: !!data.tenueAppropriee,
       constantes_tension: data.constantes_tension,
       constantes_pouls: data.constantes_pouls,

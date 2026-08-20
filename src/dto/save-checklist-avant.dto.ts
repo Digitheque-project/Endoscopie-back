@@ -34,11 +34,11 @@ export class SaveChecklistAvantDto {
   @ApiPropertyOptional()
   validationCollegiale?: boolean;
 
-  @ApiPropertyOptional()
-  anticoagulantsArretes?: boolean;
+  @ApiPropertyOptional({ description: '"OUI" / "NON" / "NA"', example: 'OUI' })
+  anticoagulantsArretes?: string;
 
-  @ApiPropertyOptional()
-  antibioprophylaxie?: boolean;
+  @ApiPropertyOptional({ description: '"OUI" / "NON" / "NA"', example: 'OUI' })
+  antibioprophylaxie?: string;
 
   @ApiPropertyOptional()
   tenueAppropriee?: boolean;
