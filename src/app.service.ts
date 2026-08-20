@@ -993,6 +993,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           priorite: this.mapUrgenceToPriorite(ext.urgence),
           dateDemande: ext.createdAt ? new Date(ext.createdAt) : prescription.dateDemande,
           serviceSourceName,
+          // Précautions & alertes saisies par le prescripteur d'origine (allergies,
+          // contre-indications...) — sécurité patient, doit rester visible sans avoir à
+          // rouvrir la prescription source.
+          alertes: ext.alertes ?? null,
         }
       : { ...prescription, serviceSourceName };
 
