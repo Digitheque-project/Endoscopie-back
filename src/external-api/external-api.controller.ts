@@ -33,7 +33,12 @@ import {
   UpdateServiceExterneDto,
 } from '../dto/resultat-examen-externe.dto';
 import { Roles } from '../auth/roles.decorator';
-import { getEndoscopieServiceId } from '../config/endoscopie-service';
+import {
+  getEndoscopieServiceId,
+  getAccueilApiUrl,
+  getEndoscopieChuId,
+  getEndoscopieAuthChuId,
+} from '../config/endoscopie-service';
 
 @Controller()
 export class ExternalApiController {
@@ -200,19 +205,34 @@ export class ExternalApiController {
     }
   }
 
-  private async getPatientInfo(patientId: string) {
+  /**
+   * Chemin correct : /accueil/patients/:id?chuId=... (voir AppService.fetchAccueilPatientFor,
+   * même API) — l'ancien chemin /patients/:id n'existe pas côté Accueil et renvoyait
+   * systématiquement 404, laissant le patient toujours à "N/A" ci-dessus.
+   */
+  private async fetchAccueilPatientFor(patientId: string, chuId: string) {
     try {
-      const accueilUrl = process.env.ACCUEIL_API_URL || 'http://localhost:3001';
-      const res = await fetch(`${accueilUrl}/patients/${patientId}`, {
-        signal: AbortSignal.timeout(5000),
-      });
-      if (res.ok) {
-        return (await res.json()) as { nom: string; prenom: string; dateNaissance: string };
-      }
+      const url = `${getAccueilApiUrl()}/accueil/patients/${encodeURIComponent(patientId)}?chuId=${chuId}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) return null;
+      const text = await res.text();
+      if (!text) return null;
+      return JSON.parse(text) as { nom: string; prenom: string; dateNaissance?: string };
     } catch {
-      // Silencieusement ignorer les erreurs d'accès patient
+      return null;
     }
-    return { nom: '', prenom: '', dateNaissance: '' };
+  }
+
+  private async getPatientInfo(patientId: string) {
+    const primaryChuId = getEndoscopieChuId();
+    let found = await this.fetchAccueilPatientFor(patientId, primaryChuId);
+    if (!found) {
+      const authChuId = getEndoscopieAuthChuId();
+      if (authChuId && authChuId !== primaryChuId) {
+        found = await this.fetchAccueilPatientFor(patientId, authChuId);
+      }
+    }
+    return found ?? { nom: '', prenom: '', dateNaissance: '' };
   }
 
   /**

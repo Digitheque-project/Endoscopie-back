@@ -34,7 +34,7 @@ services:
       - key: CHU_API_URL
         value: https://chu-service-cms7.onrender.com
       - key: ACCUEIL_API_URL
-        value: https://acceuil-back.onrender.com
+        value: https://acceuil-back-ytyd.onrender.com
       - key: NOTIFICATION_API_URL
         value: https://service-notification-nlqp.onrender.com
       - key: NOTIFICATION_WEBHOOK_SECRET
