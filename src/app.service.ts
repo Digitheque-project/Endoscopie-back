@@ -2434,6 +2434,19 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  async getResultatsByPatient(patientId: string, serviceIdOverride?: string) {
+    const resultats = await this.prisma.resultatEndoscopie.findMany({
+      where: { patientId, ...this.scope(serviceIdOverride) },
+      include: { prescription: true },
+      orderBy: { dateCreation: 'desc' },
+    });
+    // Même déplié details -> racine que getResultat, pour un format cohérent.
+    return resultats.map((resultat) => {
+      const details = resultat.details ? JSON.parse(resultat.details) : {};
+      return { ...resultat, ...details, details };
+    });
+  }
+
   async saveResultat(data: any) {
     if (!data.prescriptionId) {
       throw new Error('prescriptionId est obligatoire pour enregistrer les résultats');

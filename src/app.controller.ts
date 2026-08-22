@@ -552,6 +552,21 @@ export class AppController {
     return this.appService.getResultat(prescriptionId, serviceId);
   }
 
+  /** Tous les comptes rendus (détail complet) d'un patient donné — utilisé par l'onglet
+   * "Compte rendu opératoire" du dossier patient interactif, pour montrer les propres
+   * comptes rendus Endoscopie du patient (données locales, lecture seule). */
+  @Get('api/resultats/patient/:patientId')
+  @ApiTags('Resultats')
+  @ApiOperation({ summary: "Lister les comptes rendus d'un patient" })
+  @ApiParam({ name: 'patientId', description: 'Identifiant Accueil du patient' })
+  @ApiQuery({ name: 'serviceId', required: false })
+  async getResultatsByPatient(
+    @Param('patientId') patientId: string,
+    @Query('serviceId') serviceId?: string,
+  ) {
+    return this.appService.getResultatsByPatient(patientId, serviceId);
+  }
+
   @Post('api/resultats')
   @Roles('MEDECIN')
   @ApiTags('Resultats')
