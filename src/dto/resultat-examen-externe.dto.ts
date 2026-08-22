@@ -31,6 +31,9 @@ export class ResultatsDto {
 }
 
 export class ResultatExamenExterneDto {
+  @ApiProperty({ example: 'a1b2c3d4-...', description: "Identifiant du résultat lui-même (à utiliser comme référence stable, plutôt que prescriptionId, pour marquer un résultat comme lu ou le dédupliquer)" })
+  resultatId?: string;
+
   @ApiProperty({ example: 'PRES-2024-0187' })
   prescriptionId: string;
 

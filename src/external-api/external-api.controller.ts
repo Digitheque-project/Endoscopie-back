@@ -79,7 +79,8 @@ export class ExternalApiController {
   ): Promise<ResultatExamenExterneDto> {
     const service = await this.resolveExternalCaller(apiKey, authorization);
 
-    // Récupérer la prescription
+    // Récupérer la prescription (ancienne voie, un résultat à la fois — voir
+    // getResultatsExternePourPatient ci-dessous pour la voie patient-centrique)
     const prescription = await this.prisma.prescription.findUnique({
       where: { id: prescriptionId },
       include: {
@@ -113,6 +114,7 @@ export class ExternalApiController {
 
     // Formater la réponse
     return {
+      resultatId: prescription.resultatEndoscopie.id,
       prescriptionId,
       patient: {
         nom: patientData.nom || 'N/A',
@@ -139,6 +141,87 @@ export class ExternalApiController {
         : 'N/A',
       dateResultat: prescription.resultatEndoscopie.dateCreation.toISOString(),
     };
+  }
+
+  /**
+   * ========== ENDPOINT PUBLIC ==========
+   * Accès par services externes avec clé API ou jeton Bearer — voie patient-centrique :
+   * GET /api/examens/resultats/:prescriptionId exige de connaître à l'avance l'ID interne
+   * Endoscopie d'une prescription précise, ce qu'un service qui suit un patient (pas une
+   * prescription) n'a aucun moyen de connaître. Cette route liste tous les résultats
+   * disponibles pour un patient, avec le vrai identifiant de résultat (resultatId) plutôt
+   * que l'ID de prescription.
+   */
+  @Get('api/examens/resultats/patient/:patientId')
+  @ApiTags('Accès externe — Services cliniques')
+  @ApiOperation({
+    summary: "Lister les résultats d'examens d'un patient — accès service externe",
+    description:
+      "Endpoint sécurisé pour obtenir tous les comptes rendus d'endoscopie disponibles pour " +
+      "un patient, sans connaître à l'avance un prescriptionId. Authentification par x-api-key " +
+      "ou jeton Bearer de l'écosystème CHU (voir GET /api/examens/resultats/:prescriptionId).",
+  })
+  @ApiParam({ name: 'patientId', description: 'Identifiant Accueil du patient' })
+  @ApiHeader({
+    name: 'x-api-key',
+    description: 'Clé API du service externe (alternative : Authorization: Bearer <jeton écosystème CHU>)',
+    required: false,
+  })
+  @ApiResponse({ status: 200, type: [ResultatExamenExterneDto] })
+  @ApiResponse({ status: 400, description: 'Authentification manquante (ni x-api-key, ni Bearer)' })
+  @ApiResponse({ status: 401, description: 'Clé API ou jeton Bearer invalide' })
+  async getResultatsExternePourPatient(
+    @Param('patientId') patientId: string,
+    @Headers('x-api-key') apiKey?: string,
+    @Headers('authorization') authorization?: string,
+  ): Promise<ResultatExamenExterneDto[]> {
+    const service = await this.resolveExternalCaller(apiKey, authorization);
+
+    const resultats = await this.prisma.resultatEndoscopie.findMany({
+      where: { patientId, serviceId: getEndoscopieServiceId() },
+      include: { prescription: true },
+      orderBy: { dateCreation: 'desc' },
+    });
+
+    await this.externalApiService.logAccess(service.id, 'LIST', patientId, 200);
+
+    if (resultats.length === 0) return [];
+
+    const patientData = await this.getPatientInfo(patientId);
+    const medecinsParId = new Map<string, Awaited<ReturnType<MedecinsService['getUserById']>>>();
+    for (const r of resultats) {
+      const medecinId = r.prescription?.medecinId;
+      if (medecinId && !medecinsParId.has(medecinId)) {
+        medecinsParId.set(medecinId, await this.medecinsService.getUserById(medecinId));
+      }
+    }
+
+    return resultats.map((r) => {
+      const medecinPrescripteur = r.prescription?.medecinId ? medecinsParId.get(r.prescription.medecinId) : null;
+      return {
+        resultatId: r.id,
+        prescriptionId: r.prescriptionId,
+        patient: {
+          nom: patientData.nom || 'N/A',
+          prenoms: patientData.prenom || 'N/A',
+          dateNaissance: patientData.dateNaissance || 'N/A',
+        },
+        typeExamen: r.prescription?.typeExamen ?? 'Endoscopie',
+        dateExamen: (r.prescription?.dateDemande ?? r.dateCreation).toISOString().split('T')[0],
+        statut: 'TERMINE',
+        resultats: this.parseResultats(r.details || '{}'),
+        conclusion: r.conclusion || undefined,
+        recommandation: r.followUp || undefined,
+        reportText: r.reportText || undefined,
+        mainDiagnosis: r.mainDiagnosis || undefined,
+        observations: r.observations || undefined,
+        complication: r.complication || undefined,
+        biopsy: r.biopsy || undefined,
+        doctorName: r.doctorName || undefined,
+        medecin: medecinPrescripteur ? `${medecinPrescripteur.nom} ${medecinPrescripteur.prenom}` : 'N/A',
+        dateResultat: r.dateCreation.toISOString(),
+      };
+    });
   }
 
   /**
