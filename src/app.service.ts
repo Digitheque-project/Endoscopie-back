@@ -395,6 +395,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const chuApiUrl = getChuApiUrl();
     let service: Record<string, unknown> | null = null;
     try {
+      // Chemin non confirmé sur le Swagger actuel de CHU_API_URL (qui n'expose que
+      // /chu/:id et /prise-en-charge/:id, aucun /service/:id) — un "service" au sens
+      // Endoscopie vit plutôt côté SERVICE_REGISTRY_API_URL. Endpoint de diagnostic
+      // seul (jamais utilisé pour une vraie fonctionnalité) : laissé tel quel, dégrade
+      // déjà proprement (null) plutôt que de deviner un nouveau chemin sans certitude.
       const res = await fetch(`${chuApiUrl}/service/${serviceId}`);
       if (res.ok) {
         service = (await res.json()) as Record<string, unknown>;
@@ -761,8 +766,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     let priseEnCharge: Record<string, unknown> | null = null;
     if (accueilPatient.priseEnChargeId) {
       try {
+        // Chemin réel confirmé sur le Swagger CHU : /prise-en-charge/:id (pas
+        // /service-chu/prise-en-charge/:id) — protégé par jeton, jamais transmis ici
+        // auparavant, donc systématiquement 401 avant ce correctif.
+        const token =
+          getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
         const res = await fetch(
-          `${getChuApiUrl()}/service-chu/prise-en-charge/${encodeURIComponent(accueilPatient.priseEnChargeId)}`,
+          `${getChuApiUrl()}/prise-en-charge/${encodeURIComponent(accueilPatient.priseEnChargeId)}`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
         );
         if (res.ok) {
           priseEnCharge = (await res.json()) as Record<string, unknown>;
