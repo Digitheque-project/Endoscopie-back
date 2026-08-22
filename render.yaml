@@ -29,36 +29,21 @@ services:
         value: ab97eaaa-9239-4f37-b5d7-d652c4231cc7
       - key: ENDOSCOPIE_AUTH_CHU_ID
         value: 1e5bbbb7-fa10-4d59-8848-2d0ce96a9394
-      - key: SERVICE_REGISTRY_API_URL
-        value: https://service-service-8cgb.onrender.com
-      - key: CHU_API_URL
-        value: https://chu-service-fec1.onrender.com
-      - key: ACCUEIL_API_URL
-        value: https://acceuil-back-ytyd.onrender.com
-      - key: NOTIFICATION_API_URL
-        value: https://service-notificqtion-v2-production.up.railway.app
+      # Gateway unique de l'écosystème CHU — remplace SERVICE_REGISTRY_API_URL,
+      # CHU_API_URL, ACCUEIL_API_URL, NOTIFICATION_API_URL, BLOC_API_URL,
+      # PRESCRIPTION_EXT_API_URL, CHU_AUTH_LOGIN_URL, AUTH_USER_SERVICE_URL et
+      # DOSSIER_PATIENT_API_URL (voir endoscopie-back/.env pour le détail).
+      - key: GATEWAY_API_URL
+        value: https://gateway-bwm4.onrender.com
       - key: NOTIFICATION_WEBHOOK_SECRET
         sync: false
-      - key: BLOC_API_URL
-        value: https://bloc-prud.onrender.com/bloc/api
-      - key: PRESCRIPTION_EXT_API_URL
-        value: https://prescriptionback-production.up.railway.app/prescriptions
-      # Écosystème d'authentification CHU partagé — notre backend s'y connecte lui-même
-      # (compte de service) pour obtenir un token à joindre à ses appels serveur-à-serveur
-      # vers des services externes qui l'exigent (ex. PRESCRIPTION_EXT_API_URL ci-dessus).
-      - key: CHU_AUTH_LOGIN_URL
-        value: https://auth-service-tnqp.onrender.com
+      # Écosystème d'authentification CHU partagé (via le gateway ci-dessus) — notre
+      # backend s'y connecte lui-même (compte de service) pour obtenir un token à
+      # joindre à ses appels serveur-à-serveur vers des services externes qui l'exigent.
       - key: CHU_SERVICE_ACCOUNT_EMAIL
         sync: false
       - key: CHU_SERVICE_ACCOUNT_PASSWORD
         sync: false
-      # Service utilisateurs de l'écosystème d'authentification CHU — liste des médecins
-      # (voir src/services/medecins.service.ts). Distinct de CHU_AUTH_LOGIN_URL : le login
-      # passe par l'auth-service, la lecture des utilisateurs interroge ce service directement.
-      - key: AUTH_USER_SERVICE_URL
-        value: https://user-services-w0h3.onrender.com
-      - key: DOSSIER_PATIENT_API_URL
-        value: https://dossier-patient-back-ri3e.onrender.com/dossier-patient
       # URL Render du front une fois déployé — nécessaire pour le CORS
       - key: FRONTEND_URL
         sync: false

@@ -395,12 +395,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const chuApiUrl = getChuApiUrl();
     let service: Record<string, unknown> | null = null;
     try {
-      // Chemin non confirmé sur le Swagger actuel de CHU_API_URL (qui n'expose que
+      // Chemin non confirmé sur le Swagger actuel du gateway (qui n'expose que
       // /chu/:id et /prise-en-charge/:id, aucun /service/:id) — un "service" au sens
-      // Endoscopie vit plutôt côté SERVICE_REGISTRY_API_URL. Endpoint de diagnostic
-      // seul (jamais utilisé pour une vraie fonctionnalité) : laissé tel quel, dégrade
-      // déjà proprement (null) plutôt que de deviner un nouveau chemin sans certitude.
-      const res = await fetch(`${chuApiUrl}/service/${serviceId}`);
+      // Endoscopie vit plutôt côté registre des services. Endpoint de diagnostic seul
+      // (jamais utilisé pour une vraie fonctionnalité) : laissé tel quel, dégrade déjà
+      // proprement (null) plutôt que de deviner un nouveau chemin sans certitude.
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+      const res = await fetch(`${chuApiUrl}/service/${serviceId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (res.ok) {
         service = (await res.json()) as Record<string, unknown>;
       }
@@ -589,7 +592,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private async fetchAccueilPatientsFor(chuId: string): Promise<AccueilPatientRaw[]> {
     try {
       const url = `${getAccueilApiUrl()}/accueil/patients?chuId=${chuId}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      // Passé par le gateway CHU, contrairement à un appel direct à Accueil (avant
+      // migration) : un jeton Bearer est désormais obligatoire sur ce chemin.
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!res.ok) return [];
       return (await res.json()) as AccueilPatientRaw[];
     } catch {
@@ -664,7 +673,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private async fetchAccueilPatientFor(patientId: string, chuId: string): Promise<AccueilPatientRaw | null> {
     try {
       const url = `${getAccueilApiUrl()}/accueil/patients/${encodeURIComponent(patientId)}?chuId=${chuId}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      // Passé par le gateway CHU : jeton Bearer obligatoire (voir fetchAccueilPatientsFor).
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!res.ok) return null;
       const text = await res.text();
       if (!text) return null;
@@ -1198,9 +1212,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       ...(dateExamenSouhaitee && { dateExamenSouhaitee }),
     };
 
+    // Passé par le gateway CHU : jeton Bearer obligatoire.
+    const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
     const res = await fetch(`${blocUrl}/demandes-cpa-externes/receive`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify(payload),
     });
 

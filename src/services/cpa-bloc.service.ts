@@ -3,6 +3,8 @@ import { DossierCPA } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { getBlocApiUrl } from '../config/endoscopie-service';
 import { parseDateTimeAsUtc } from '../utils/datetime.util';
+import { getCurrentUserToken } from '../auth/request-context';
+import { MedecinsService } from './medecins.service';
 
 export type CpaBlocSyncStatus =
   | 'synchronise'
@@ -47,7 +49,10 @@ const CASCADE_STATUT_MAP: Record<string, string> = {
 export class CpaBlocService {
   private readonly logger = new Logger(CpaBlocService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private medecinsService: MedecinsService,
+  ) {}
 
   async synchroniserDepuisBloc(dossierId: string): Promise<CpaBlocSyncResult> {
     const dossier = await this.prisma.dossierCPA.findUnique({
@@ -67,9 +72,14 @@ export class CpaBlocService {
 
     let remote: Record<string, unknown>;
     try {
+      // Passé par le gateway CHU : jeton Bearer obligatoire.
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
       const res = await fetch(
         `${blocUrl}/demandes-cpa-externes/${dossier.blocDemandeId}/statut`,
-        { signal: AbortSignal.timeout(8000) },
+        {
+          signal: AbortSignal.timeout(8000),
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        },
       );
       if (!res.ok) {
         this.logger.warn(

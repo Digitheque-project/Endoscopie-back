@@ -1,6 +1,8 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { getEndoscopieAuthServiceId, getEndoscopieServiceId } from '../config/endoscopie-service';
 import { getNotificationApiUrl } from '../config/notification-service';
+import { getCurrentUserToken } from '../auth/request-context';
+import { MedecinsService } from '../services/medecins.service';
 import { CreateNotificationPayload } from './notification.types';
 import { NotificationInboxService } from './notification-inbox.service';
 
@@ -9,6 +11,7 @@ export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
 
   constructor(
+    private readonly medecinsService: MedecinsService,
     @Optional() private readonly inbox?: NotificationInboxService,
   ) {}
 
@@ -52,9 +55,14 @@ export class NotificationService {
       },
     };
     try {
+      // Passé par le gateway CHU : jeton Bearer obligatoire.
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
       const res = await fetch(`${this.baseUrl}/notifications/service`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(body),
       });
       if (!res.ok) {

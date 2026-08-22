@@ -213,7 +213,12 @@ export class ExternalApiController {
   private async fetchAccueilPatientFor(patientId: string, chuId: string) {
     try {
       const url = `${getAccueilApiUrl()}/accueil/patients/${encodeURIComponent(patientId)}?chuId=${chuId}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      // Passé par le gateway CHU : jeton Bearer obligatoire.
+      const token = await this.medecinsService.getServiceAccountToken();
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!res.ok) return null;
       const text = await res.text();
       if (!text) return null;

@@ -32,8 +32,29 @@ export function getEndoscopieAuthChuId(): string | null {
   return process.env.ENDOSCOPIE_AUTH_CHU_ID?.trim() || null;
 }
 
+/**
+ * Point d'entrée unique de l'écosystème CHU (gateway-bwm4) — proxifie tous les
+ * microservices (auth, users, services, chu, accueil, notification, prescriptions,
+ * bloc, dossier-patient...) chacun sous son propre préfixe de chemin, exactement les
+ * mêmes chemins qu'en appelant chaque service directement (vérifié le 22/08/2026).
+ * Remplace les anciennes variables séparées par service (CHU_API_URL, ACCUEIL_API_URL,
+ * etc.) — une seule URL à tenir à jour désormais. Contrairement aux services appelés en
+ * direct, le gateway exige un jeton Bearer sur TOUS ses chemins, même ceux qui n'en
+ * avaient pas besoin en direct (voir les appels ci-dessous, tous mis à jour en
+ * conséquence).
+ */
+function getGatewayApiUrl(): string {
+  return requireEnv('GATEWAY_API_URL');
+}
+
+/** Optionnel : contrairement à getGatewayApiUrl, ne lève pas si absent — pour les
+ * intégrations dont l'appelant sait déjà rester silencieux en son absence. */
+function getOptionalGatewayApiUrl(): string | null {
+  return process.env.GATEWAY_API_URL?.trim().replace(/\/$/, '') || null;
+}
+
 export function getChuApiUrl(): string {
-  return requireEnv('CHU_API_URL');
+  return getGatewayApiUrl();
 }
 
 /**
@@ -42,42 +63,38 @@ export function getChuApiUrl(): string {
  * le code appelant doit rester silencieux (voir resolveServiceName dans app.service.ts).
  */
 export function getServiceRegistryApiUrl(): string | null {
-  return process.env.SERVICE_REGISTRY_API_URL?.trim().replace(/\/$/, '') || null;
+  return getOptionalGatewayApiUrl();
 }
 
 export function getAccueilApiUrl(): string {
-  return requireEnv('ACCUEIL_API_URL');
+  return getGatewayApiUrl();
 }
 
 /**
- * URL de l'API du service Bloc Opératoire (intégration CPA/VPA). BLOC_API_URL ne
- * contient que l'origine (ex. https://bloc-prud.onrender.com) — le chemin de l'API
+ * URL de l'API du service Bloc Opératoire (intégration CPA/VPA) — le chemin de l'API
  * (/bloc/api) est ajouté ici, pas dans le .env.
  */
 export function getBlocApiUrl(): string | null {
-  const base = process.env.BLOC_API_URL?.trim().replace(/\/$/, '');
+  const base = getOptionalGatewayApiUrl();
   return base ? `${base}/bloc/api` : null;
 }
 
 /**
- * URL de l'API prescription mutualisée du CHU. PRESCRIPTION_EXT_API_URL ne contient
- * que l'origine — le chemin de l'API (/prescriptions) est ajouté ici, pas dans le .env.
+ * URL de l'API prescription mutualisée du CHU — le chemin de l'API (/prescriptions)
+ * est ajouté ici, pas dans le .env.
  */
 export function getPrescriptionExtApiUrl(): string {
-  return `${requireEnv('PRESCRIPTION_EXT_API_URL')}/prescriptions`;
+  return `${getGatewayApiUrl()}/prescriptions`;
 }
 
 /**
  * URL du microservice Dossier Patient CHU (suivis, diagnostics, antécédents, sorties
- * médicales...) — parcours du patient au-delà de l'Endoscopie. Optionnel : ce service
- * exige son propre token (distinct du JWT de l'écosystème d'authentification partagé),
- * que nous n'avons pas encore ; les appels échoueront donc en 401 tant qu'il ne nous
- * aura pas été fourni. Le code appelant doit rester silencieux dans ce cas.
- * DOSSIER_PATIENT_API_URL ne contient que l'origine — le chemin de l'API
- * (/dossier-patient) est ajouté ici, pas dans le .env.
+ * médicales...) — parcours du patient au-delà de l'Endoscopie. Optionnel : le code
+ * appelant doit rester silencieux en son absence (voir dossier-patient.service.ts).
+ * Le chemin de l'API (/dossier-patient) est ajouté ici, pas dans le .env.
  */
 export function getDossierPatientApiUrl(): string | null {
-  const base = process.env.DOSSIER_PATIENT_API_URL?.trim().replace(/\/$/, '');
+  const base = getOptionalGatewayApiUrl();
   return base ? `${base}/dossier-patient` : null;
 }
 
@@ -88,7 +105,7 @@ export function getDossierPatientApiUrl(): string | null {
  * pour obtenir un token à joindre à ses appels serveur-à-serveur.
  */
 export function getAuthEcosystemLoginUrl(): string | null {
-  return process.env.CHU_AUTH_LOGIN_URL?.trim().replace(/\/$/, '') || null;
+  return getOptionalGatewayApiUrl();
 }
 
 /** Identifiants du compte de service utilisé par le backend pour s'authentifier auprès de l'écosystème CHU. */

@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getCurrentUserToken } from '../auth/request-context';
+import { MedecinsService } from './medecins.service';
 import {
   CreateServiceSourceDto,
   UpdateServiceSourceDto,
@@ -7,15 +9,22 @@ import {
   WebhookNotificationDto,
 } from '../dto/service-source.dto';
 
+// Alias legacy — même gateway CHU que le reste de l'écosystème (voir
+// config/endoscopie-service.ts), conservé ici en variable dédiée pour ne pas ajouter
+// une dépendance croisée avec ce fichier de config pour un seul usage.
 const NOTIFICATION_SERVICE_URL =
   process.env.NOTIFICATION_SERVICE_URL ||
-  'https://service-notification-nlqp.onrender.com';
+  process.env.GATEWAY_API_URL ||
+  'https://gateway-bwm4.onrender.com';
 
 @Injectable()
 export class ServiceSourceService {
   private readonly logger = new Logger(ServiceSourceService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private medecinsService: MedecinsService,
+  ) {}
 
   async createService(
     dto: CreateServiceSourceDto,
@@ -119,13 +128,16 @@ export class ServiceSourceService {
     if (!service) return;
 
     try {
-      // Utiliser le service de notification pour envoyer le webhook
+      // Utiliser le service de notification pour envoyer le webhook — passé par le
+      // gateway CHU : jeton Bearer obligatoire.
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
       const response = await fetch(
         `${NOTIFICATION_SERVICE_URL}/api/notifications/webhook`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
             url: service.urlWebhook,

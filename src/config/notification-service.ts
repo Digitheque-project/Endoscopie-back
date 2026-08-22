@@ -1,8 +1,8 @@
-/** API notifications Render — https://service-notification-nlqp.onrender.com/api/docs */
+/** Gateway CHU (voir config/endoscopie-service.ts) — chemin /notifications inchangé. */
 export function getNotificationApiUrl(): string {
   return (
-    process.env.NOTIFICATION_API_URL?.trim().replace(/\/$/, '') ||
-    'https://service-notification-nlqp.onrender.com'
+    process.env.GATEWAY_API_URL?.trim().replace(/\/$/, '') ||
+    'https://gateway-bwm4.onrender.com'
   );
 }
 

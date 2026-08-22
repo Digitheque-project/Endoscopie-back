@@ -21,7 +21,7 @@ interface UserServiceUser {
 }
 
 function getUserServiceUrl(): string | null {
-  return process.env.AUTH_USER_SERVICE_URL?.trim().replace(/\/$/, '') || null;
+  return process.env.GATEWAY_API_URL?.trim().replace(/\/$/, '') || null;
 }
 
 @Injectable()
