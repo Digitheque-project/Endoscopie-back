@@ -12,6 +12,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -56,28 +57,27 @@ export class ExternalApiController {
   @ApiTags('Accès externe — Services cliniques')
   @ApiOperation({
     summary: 'Obtenir le résultat d\'examen — accès service externe',
-    description: 'Endpoint sécurisé pour accéder aux résultats d\'examens d\'endoscopie avec une clé API valide',
+    description:
+      'Endpoint sécurisé pour accéder aux résultats d\'examens d\'endoscopie, soit avec une ' +
+      'clé API dédiée (x-api-key), soit avec un jeton Bearer de l\'écosystème CHU partagé.',
   })
   @ApiParam({ name: 'prescriptionId', description: 'N° de la prescription' })
   @ApiHeader({
     name: 'x-api-key',
-    description: 'Clé API du service externe',
-    required: true,
+    description: 'Clé API du service externe (alternative : Authorization: Bearer <jeton écosystème CHU>)',
+    required: false,
   })
   @ApiResponse({ status: 200, type: ResultatExamenExterneDto })
-  @ApiResponse({ status: 401, description: 'Clé API invalide ou absente' })
+  @ApiResponse({ status: 400, description: 'Authentification manquante (ni x-api-key, ni Bearer)' })
+  @ApiResponse({ status: 401, description: 'Clé API ou jeton Bearer invalide' })
   @ApiResponse({ status: 403, description: 'Résultat non disponible' })
   @ApiResponse({ status: 404, description: 'Prescription introuvable' })
   async getResultatExterne(
     @Param('prescriptionId') prescriptionId: string,
     @Headers('x-api-key') apiKey?: string,
+    @Headers('authorization') authorization?: string,
   ): Promise<ResultatExamenExterneDto> {
-    if (!apiKey) {
-      throw new BadRequestException('Clé API manquante dans le header x-api-key');
-    }
-
-    // Valider la clé API
-    const service = await this.externalApiService.validateApiKey(apiKey);
+    const service = await this.resolveExternalCaller(apiKey, authorization);
 
     // Récupérer la prescription
     const prescription = await this.prisma.prescription.findUnique({
@@ -204,6 +204,36 @@ export class ExternalApiController {
       statut: rdv.statut,
       typeExamen: rdv.prescription?.typeExamen ?? null,
     }));
+  }
+
+  /**
+   * Deux voies d'authentification acceptées pour GET /api/examens/resultats/:prescriptionId :
+   * la clé API dédiée (x-api-key, comportement historique inchangé — Hospitalisation,
+   * Accueil) ou, plus simple pour un nouveau service consommateur, un jeton Bearer de
+   * l'écosystème CHU partagé (voir ExternalApiService.validateEcosystemToken). x-api-key
+   * est essayée en premier si présente, pour ne rien changer aux intégrations existantes.
+   */
+  private async resolveExternalCaller(apiKey?: string, authorization?: string) {
+    if (apiKey) {
+      return this.externalApiService.validateApiKey(apiKey);
+    }
+
+    const bearerToken = authorization?.startsWith('Bearer ')
+      ? authorization.slice('Bearer '.length).trim()
+      : undefined;
+    if (bearerToken) {
+      const service = await this.externalApiService.validateEcosystemToken(bearerToken);
+      if (!service) {
+        throw new UnauthorizedException(
+          "Jeton Bearer invalide, expiré, ou vérification indisponible (JWT_SECRET non configuré)",
+        );
+      }
+      return service;
+    }
+
+    throw new BadRequestException(
+      "Authentification manquante : fournir soit le header x-api-key, soit un jeton Bearer de l'écosystème CHU dans Authorization",
+    );
   }
 
   private parseResultats(detailsJson: string): any {

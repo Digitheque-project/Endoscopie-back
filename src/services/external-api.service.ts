@@ -1,10 +1,18 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { randomUUID } from 'crypto';
+import * as jwt from 'jsonwebtoken';
 import { CreateServiceExterneDto, UpdateServiceExterneDto } from '../dto/resultat-examen-externe.dto';
+
+/** Nom de l'entrée ServiceExterne partagée sous laquelle sont journalisés les accès
+ * authentifiés par jeton Bearer de l'écosystème CHU (voir validateEcosystemToken) —
+ * distincte des services enregistrés individuellement avec leur propre clé API. */
+const ECOSYSTEM_JWT_SERVICE_NAME = 'Écosystème CHU (JWT partagé)';
 
 @Injectable()
 export class ExternalApiService {
+  private readonly logger = new Logger(ExternalApiService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async generateApiKey(): Promise<string> {
@@ -85,6 +93,39 @@ export class ExternalApiService {
     }
 
     return service;
+  }
+
+  /**
+   * Alternative au x-api-key : accepte tout jeton Bearer valide de l'écosystème
+   * d'authentification CHU partagé (utilisateur réel ou compte de service — même
+   * jeton que celui obtenu via {gateway}/auth/login, voir MedecinsService.
+   * getServiceAccountToken). Évite à chaque nouveau service consommateur de devoir
+   * se faire enregistrer manuellement ici avec une clé dédiée. Retourne `null`
+   * (jamais d'exception) si JWT_SECRET n'est pas configuré ou si le jeton est
+   * invalide/expiré — l'appelant retombe alors sur le comportement x-api-key existant.
+   */
+  async validateEcosystemToken(token: string) {
+    const secret = process.env.JWT_SECRET;
+    if (!secret) return null;
+
+    try {
+      jwt.verify(token, secret);
+    } catch (e) {
+      this.logger.warn(`Jeton Bearer écosystème CHU invalide/expiré : ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+
+    // Pas de ServiceExterne dédié pour cette voie — journalise les accès sous une
+    // entrée partagée plutôt que d'exiger un enregistrement par service appelant.
+    return this.prisma.serviceExterne.upsert({
+      where: { nom: ECOSYSTEM_JWT_SERVICE_NAME },
+      update: {},
+      create: {
+        nom: ECOSYSTEM_JWT_SERVICE_NAME,
+        apiKey: randomUUID(),
+        actif: true,
+      },
+    });
   }
 
   async logAccess(serviceExterneId: string, prescriptionId: string, patientId: string, statut: number) {
