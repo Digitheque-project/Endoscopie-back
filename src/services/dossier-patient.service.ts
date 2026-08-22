@@ -67,8 +67,16 @@ export class DossierPatientService {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return [];
-      const data = await res.json();
-      return Array.isArray(data) ? data : [];
+      const data = (await res.json()) as unknown;
+      // Certaines routes de ce service renvoient un tableau brut (diagnostics, suivis),
+      // d'autres une enveloppe paginée { data: [...], total } (résultats, observations,
+      // confirmé en direct) — gérer les deux pour ne pas jeter silencieusement des
+      // résultats réels le jour où l'agrégation externe recommencera à en renvoyer.
+      return Array.isArray(data)
+        ? data
+        : Array.isArray((data as { data?: unknown })?.data)
+          ? (data as { data: unknown[] }).data
+          : [];
     } catch (e) {
       this.logger.warn(`Dossier Patient CHU — échec ${path}: ${e instanceof Error ? e.message : e}`);
       return [];
