@@ -46,7 +46,7 @@ export class ResultatExamenExterneDto {
   @ApiProperty({ example: 'TERMINE', enum: ['PREVU', 'EN_COURS', 'TERMINE', 'ANNULE'] })
   statut: string;
 
-  @ApiProperty({ type: ResultatsDto })
+  @ApiProperty({ type: ResultatsDto, description: 'Constatations détaillées (par organe, matériel, équipe...) — reflet brut du compte rendu' })
   resultats: ResultatsDto;
 
   @ApiProperty({ example: 'Gastrite érythémateuse modérée' })
@@ -54,6 +54,24 @@ export class ResultatExamenExterneDto {
 
   @ApiProperty({ example: 'Traitement IPP 6 semaines' })
   recommandation?: string;
+
+  @ApiProperty({ example: 'Compte rendu complet rédigé par le médecin', description: 'Texte libre du compte rendu' })
+  reportText?: string;
+
+  @ApiProperty({ example: 'Gastrite chronique', description: 'Diagnostic principal' })
+  mainDiagnosis?: string;
+
+  @ApiProperty({ example: 'Muqueuse érythémateuse diffuse', description: 'Observations détaillées de l\'examen' })
+  observations?: string;
+
+  @ApiProperty({ example: 'Aucune', description: 'Complications éventuelles survenues pendant l\'examen' })
+  complication?: string;
+
+  @ApiProperty({ example: 'Biopsie antrale x2', description: 'Prélèvements biopsiques réalisés' })
+  biopsy?: string;
+
+  @ApiProperty({ example: 'Dr. Razafindrabe', description: "Nom du médecin ayant rédigé le compte rendu (distinct du prescripteur)" })
+  doctorName?: string;
 
   @ApiProperty({ example: 'Dr. Razafindrabe' })
   medecin?: string;

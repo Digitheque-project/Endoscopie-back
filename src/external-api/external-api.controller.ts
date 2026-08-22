@@ -125,6 +125,15 @@ export class ExternalApiController {
       resultats: this.parseResultats(prescription.resultatEndoscopie.details || '{}'),
       conclusion: prescription.resultatEndoscopie.conclusion || undefined,
       recommandation: prescription.resultatEndoscopie.followUp || undefined,
+      // Résultats détaillés au-delà de la seule conclusion finale — le service externe
+      // ne doit pas se limiter au compte rendu synthétique, il doit pouvoir consulter
+      // le détail complet rédigé par le médecin Endoscopie.
+      reportText: prescription.resultatEndoscopie.reportText || undefined,
+      mainDiagnosis: prescription.resultatEndoscopie.mainDiagnosis || undefined,
+      observations: prescription.resultatEndoscopie.observations || undefined,
+      complication: prescription.resultatEndoscopie.complication || undefined,
+      biopsy: prescription.resultatEndoscopie.biopsy || undefined,
+      doctorName: prescription.resultatEndoscopie.doctorName || undefined,
       medecin: medecinPrescripteur
         ? `${medecinPrescripteur.nom} ${medecinPrescripteur.prenom}`
         : 'N/A',
