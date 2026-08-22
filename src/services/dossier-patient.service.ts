@@ -8,6 +8,7 @@ import {
 } from '../config/endoscopie-service';
 import { getCurrentUserToken } from '../auth/request-context';
 import { MedecinsService } from './medecins.service';
+import { PrismaService } from '../prisma/prisma.service';
 
 interface DossierPatientContext {
   baseUrl: string;
@@ -30,7 +31,10 @@ interface DossierPatientContext {
 export class DossierPatientService {
   private readonly logger = new Logger(DossierPatientService.name);
 
-  constructor(private readonly medecinsService: MedecinsService) {}
+  constructor(
+    private readonly medecinsService: MedecinsService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   private async context(): Promise<DossierPatientContext | null> {
     const baseUrl = getDossierPatientApiUrl();
@@ -97,8 +101,47 @@ export class DossierPatientService {
     return this.getList(`/patients/${encodeURIComponent(patientId)}/historique`);
   }
 
-  // Résultats paracliniques — idem, pas encore implémenté côté service.
-  getResultats(patientId: string) {
-    return this.getList(`/patients/${encodeURIComponent(patientId)}/resultats`);
+  // Résultats paracliniques — fusionne les résultats des autres services du CHU (externe,
+  // peut renvoyer une liste vide si pas encore implémenté côté service) avec les comptes
+  // rendus déjà rédigés dans Endoscopie (locaux) : sans ça, un médecin consultant le
+  // dossier patient ne voyait jamais ses propres comptes rendus ici, alors qu'ils
+  // existent bel et bien (visibles séparément dans Archives). Lecture seule des deux
+  // côtés — jamais écrit vers le service externe (voir commentaire de la classe).
+  async getResultats(patientId: string) {
+    const [externes, locaux] = await Promise.all([
+      this.getList(`/patients/${encodeURIComponent(patientId)}/resultats`),
+      this.getEndoscopieResultats(patientId),
+    ]);
+    return [...locaux, ...externes].sort((a: any, b: any) => {
+      const dateA = a?.date ? new Date(a.date).getTime() : 0;
+      const dateB = b?.date ? new Date(b.date).getTime() : 0;
+      return dateB - dateA;
+    });
+  }
+
+  private async getEndoscopieResultats(patientId: string) {
+    try {
+      const serviceId = getEndoscopieServiceId();
+      const resultats = await this.prisma.resultatEndoscopie.findMany({
+        where: { patientId, serviceId },
+        include: { prescription: true },
+        orderBy: { dateCreation: 'desc' },
+      });
+      return resultats.map((r) => ({
+        id: `endoscopie-${r.id}`,
+        titre: r.prescription?.typeExamen
+          ? `Endoscopie — ${r.prescription.typeExamen}`
+          : "Compte rendu d'endoscopie",
+        type: 'endoscopie',
+        statut: 'disponible',
+        date: r.dateCreation,
+        description: r.conclusion || r.observations || undefined,
+      }));
+    } catch (e) {
+      this.logger.warn(
+        `Résultats Endoscopie locaux — échec pour patient ${patientId}: ${e instanceof Error ? e.message : e}`,
+      );
+      return [];
+    }
   }
 }
