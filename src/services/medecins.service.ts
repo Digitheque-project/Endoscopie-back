@@ -147,11 +147,15 @@ export class MedecinsService {
         return [];
       }
       const data = (await res.json()) as unknown;
+      // Forme réelle confirmée : { "users": [...] } — jamais un tableau brut ni
+      // { "data": [...] } (les deux repérés en gardaient en repli, au cas où).
       const items: UserServiceUser[] = Array.isArray(data)
         ? (data as UserServiceUser[])
-        : Array.isArray((data as { data?: unknown })?.data)
-          ? ((data as { data: UserServiceUser[] }).data)
-          : [];
+        : Array.isArray((data as { users?: unknown })?.users)
+          ? ((data as { users: UserServiceUser[] }).users)
+          : Array.isArray((data as { data?: unknown })?.data)
+            ? ((data as { data: UserServiceUser[] }).data)
+            : [];
 
       return items.map((u) => ({
         id: u.id,
