@@ -34,7 +34,7 @@ services:
       # PRESCRIPTION_EXT_API_URL, CHU_AUTH_LOGIN_URL, AUTH_USER_SERVICE_URL et
       # DOSSIER_PATIENT_API_URL (voir endoscopie-back/.env pour le détail).
       - key: GATEWAY_API_URL
-        value: https://gateway-bwm4.onrender.com
+        value: https://gateway-h36x.onrender.com
       - key: NOTIFICATION_WEBHOOK_SECRET
         sync: false
       # Écosystème d'authentification CHU partagé (via le gateway ci-dessus) — notre

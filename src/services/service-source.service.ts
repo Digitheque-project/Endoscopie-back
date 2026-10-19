@@ -15,7 +15,7 @@ import {
 const NOTIFICATION_SERVICE_URL =
   process.env.NOTIFICATION_SERVICE_URL ||
   process.env.GATEWAY_API_URL ||
-  'https://gateway-bwm4.onrender.com';
+  'https://gateway-h36x.onrender.com';
 
 @Injectable()
 export class ServiceSourceService {

@@ -33,7 +33,7 @@ export function getEndoscopieAuthChuId(): string | null {
 }
 
 /**
- * Point d'entrée unique de l'écosystème CHU (gateway-bwm4) — proxifie tous les
+ * Point d'entrée unique de l'écosystème CHU (gateway-h36x) — proxifie tous les
  * microservices (auth, users, services, chu, accueil, notification, prescriptions,
  * bloc, dossier-patient...) chacun sous son propre préfixe de chemin, exactement les
  * mêmes chemins qu'en appelant chaque service directement (vérifié le 22/08/2026).

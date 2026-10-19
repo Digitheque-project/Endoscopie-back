@@ -2,7 +2,7 @@
 export function getNotificationApiUrl(): string {
   return (
     process.env.GATEWAY_API_URL?.trim().replace(/\/$/, '') ||
-    'https://gateway-bwm4.onrender.com'
+    'https://gateway-h36x.onrender.com'
   );
 }
 
