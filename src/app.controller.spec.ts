@@ -8,7 +8,9 @@ describe('AppController', () => {
   beforeEach(async () => {
     const app: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
-      providers: [AppService],
+      // AppService dépend de Prisma et de six autres services : on le simule pour
+      // tester le contrôleur seul, sans base de données.
+      providers: [{ provide: AppService, useValue: { getHello: () => 'Hello World!' } }],
     }).compile();
 
     appController = app.get<AppController>(AppController);
