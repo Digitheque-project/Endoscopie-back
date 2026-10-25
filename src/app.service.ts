@@ -79,6 +79,8 @@ interface ExternalEndoscopiePrescription {
   serviceIdSource?: string | null;
   serviceIdDest?: string | null;
   createdAt?: string | null;
+  /** Nom saisi par le service source quand le prescripteur n'a pas de compte (Accueil). */
+  nomMedecinPrescripteur?: string | null;
   demandes?: ExternalEndoscopieDemande[];
   // Rétrocompatibilité : certaines réponses peuvent renvoyer un examen unique à plat,
   // sans tableau `demandes`.
@@ -109,6 +111,11 @@ type FlatExternalDemande = {
   /** ID de la prescription externe parente (regroupe les demandes multiples). */
   prescriptionExternalId: string;
 };
+
+/** Identifiant du prescripteur ; repli sur son nom quand le service source n'a pas d'id. */
+function prescripteurKey(p: ExternalEndoscopiePrescription): string {
+  return p.prescripteurId || (p.nomMedecinPrescripteur ? `externe:${p.nomMedecinPrescripteur}` : '');
+}
 
 @Injectable()
 export class AppService implements OnModuleInit, OnModuleDestroy {
@@ -316,7 +323,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           flat.push({
             id: d.id,
             patientId: p.patientId,
-            prescripteurId: p.prescripteurId,
+            prescripteurId: prescripteurKey(p),
             typeExamen: d.typeExamen || d.autreExamen || 'Endoscopie',
             // Renseignement clinique propre à cet examen en priorité — repli sur le
             // renseignement général de la prescription (partagé) s'il n'est pas renseigné.
@@ -336,7 +343,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         flat.push({
           id: p.id,
           patientId: p.patientId,
-          prescripteurId: p.prescripteurId,
+          prescripteurId: prescripteurKey(p),
           typeExamen: p.typeExamen,
           renseignements: p.renseignements,
           urgence: p.urgence,
@@ -357,6 +364,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   /** Récupère les demandes d'endoscopie externes, aplaties (une demande = une prescription). */
   private async fetchExternalPrescriptions(serviceIdOverride?: string): Promise<FlatExternalDemande[]> {
     const raw = await this.fetchExternalPrescriptionsRaw(serviceIdOverride);
+    for (const p of raw) {
+      this.medecinsService.rememberPrescripteurExterne(prescripteurKey(p), p.nomMedecinPrescripteur);
+    }
     return this.flattenExternalPrescriptions(raw);
   }
 
@@ -517,7 +527,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         checklistAvant: true,
         checklistApres: true,
         resultatEndoscopie: true,
-        rendezVous: true,
+        rendezVous: { include: { salle: true } },
       },
       orderBy: { dateDemande: 'desc' },
     });
@@ -829,7 +839,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const localRecords = externalIds.length
       ? await this.prisma.prescription.findMany({
           where: { externalId: { in: externalIds } },
-          include: { rendezVous: true, checklistApres: true, dossierCPA: true },
+          include: { rendezVous: { include: { salle: true } }, checklistApres: true, dossierCPA: true },
         })
       : [];
     const localByExtId = new Map(
@@ -988,7 +998,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
 
   async getPrescriptionById(id: string, serviceIdOverride?: string) {
     const include = {
-      rendezVous: true,
+      rendezVous: { include: { salle: true } },
       checklistAvant: true,
       checklistApres: true,
       dossierCPA: true,
@@ -2073,6 +2083,30 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    // Décision du médecin (anesthésie choisie, ou refus) : le major est prévenu.
+    // Fire-and-forget, comme les autres notifications : jamais bloquant pour la décision.
+    const anesthesieDecidee = !!data.typeAnesthesie && !existing.typeAnesthesie;
+    const refus = data.statut === 'Annulé' && existing.statut !== 'Annulé';
+    if (existing.prescriptionId && (anesthesieDecidee || refus)) {
+      const prescriptionId = existing.prescriptionId;
+      void (async () => {
+        const patientId = updated.patientId ?? updated.prescription?.patientId ?? null;
+        const accueilPatient = patientId ? await this.getAccueilPatient(patientId) : null;
+        await this.notificationService.notifyDecisionMedecin({
+          prescriptionId,
+          patientId,
+          typeExamen: updated.prescription?.typeExamen ?? null,
+          patient: accueilPatient ? { nom: accueilPatient.nom, prenom: accueilPatient.prenom || '' } : null,
+          typeAnesthesie: data.typeAnesthesie ?? null,
+          refus: refus ? data.motifRefus || 'sans motif' : null,
+        });
+      })().catch((e) =>
+        this.logger.warn(
+          `Notification de décision échouée pour la prescription ${prescriptionId}: ${e instanceof Error ? e.message : e}`,
+        ),
+      );
+    }
+
     const withMedecin = await this.medecinsService.attachMedecin(
       updated,
       'medecinId',
@@ -2655,7 +2689,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const prescriptions = await this.prisma.prescription.findMany({
       where: this.scope(serviceIdOverride),
       include: {
-        rendezVous: true,
+        rendezVous: { include: { salle: true } },
         dossierCPA: true,
       },
       orderBy: { dateDemande: 'desc' },
@@ -2672,7 +2706,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     const prescriptionRaw = await this.prisma.prescription.findFirst({
       where: { id: prescriptionId, ...this.scope(serviceIdOverride) },
       include: {
-        rendezVous: true,
+        rendezVous: { include: { salle: true } },
         dossierCPA: true,
       },
     });

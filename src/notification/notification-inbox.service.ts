@@ -13,11 +13,16 @@ const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
 
 const MAX_INBOX = 200;
 
+/** Fenêtre pendant laquelle une notification identique (type, motif, dossier) est ignorée. */
+const DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
+
 @Injectable()
 export class NotificationInboxService {
   private readonly logger = new Logger(NotificationInboxService.name);
   private readonly items: InboxNotification[] = [];
   private readonly events$ = new Subject<InboxNotification>();
+  /** Contenu (type|motif|dossier) -> instant de réception, pour écarter les doublons. */
+  private readonly recentContents = new Map<string, number>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -56,6 +61,20 @@ export class NotificationInboxService {
       );
       return null;
     }
+
+    // Même notification reçue deux fois (même id externe, ou même contenu à quelques
+    // minutes d'intervalle) : une seule entrée, un seul son côté cloche.
+    if (dto.id && this.items.some((i) => i.externalId === dto.id)) return null;
+    const contentKey = `${dto.type}|${(dto.motif ?? '').trim()}|${dto.entiteRefId ?? ''}`;
+    const now = Date.now();
+    for (const [k, at] of this.recentContents) {
+      if (now - at > DUPLICATE_WINDOW_MS) this.recentContents.delete(k);
+    }
+    if (this.recentContents.has(contentKey)) {
+      this.logger.debug(`Notification en double ignorée: ${dto.type} ${dto.motif}`);
+      return null;
+    }
+    this.recentContents.set(contentKey, now);
 
     const item = this.normalizeIncoming(dto, meta?.source);
     this.items.unshift(item);

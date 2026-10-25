@@ -267,4 +267,48 @@ export class NotificationService {
       },
     });
   }
+
+  /**
+   * Décision du médecin (type d'anesthésie choisi, ou examen refusé) : le major, qui a
+   * planifié le rendez-vous, en est prévenu pour préparer la suite.
+   */
+  async notifyDecisionMedecin(decision: {
+    prescriptionId: string;
+    patientId?: string | null;
+    typeExamen?: string | null;
+    patient?: { nom: string; prenom: string } | null;
+    typeAnesthesie?: string | null;
+    refus?: string | null;
+  }): Promise<unknown | null> {
+    const patientName = decision.patient
+      ? `${decision.patient.prenom} ${decision.patient.nom}`.trim()
+      : 'Patient';
+    const typeExamenLabel = decision.typeExamen || 'Examen';
+    const detail = decision.refus
+      ? `examen refusé (${decision.refus})`
+      : `anesthésie ${decision.typeAnesthesie ?? 'choisie'}`;
+
+    return this.createNotification({
+      type: 'DECISION_MEDECIN',
+      motif: `Décision du médecin — ${typeExamenLabel} (${patientName}) : ${detail}`,
+      urgence: 2,
+      emitter: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
+      emitterName: 'Médecin Endoscopie',
+      recipient: 'endoscopie-major',
+      recipientName: 'Major Endoscopie',
+      departmentSource: 'Médecin',
+      departmentTarget: 'Major',
+      patientId: decision.patientId ?? undefined,
+      entiteRefType: 'Prescription',
+      entiteRefId: decision.prescriptionId,
+      channels: ['INTERNAL', 'SOUND'],
+      payload: {
+        sourceServiceId: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
+        sourceServiceName: 'Unité Endoscopie',
+        patientName,
+        typeExamen: typeExamenLabel,
+        origin: 'interne',
+      },
+    });
+  }
 }

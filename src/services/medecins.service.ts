@@ -34,6 +34,24 @@ export class MedecinsService {
   private serviceAccountLoginInFlight: Promise<string | null> | null = null;
 
   /**
+   * Prescripteurs hors plateforme (ex. médecin de ville saisi à l'Accueil : son « id »
+   * est un numéro ONM, pas un compte du service utilisateurs) — nom transmis avec la
+   * prescription externe, retenu à chaque lecture du flux externe pour l'afficher partout
+   * où seul l'id est connu (rendez-vous, archives...).
+   */
+  private readonly prescripteursExternes = new Map<string, string>();
+
+  rememberPrescripteurExterne(id: string | null | undefined, nom: string | null | undefined): void {
+    const propre = (nom ?? '').replace(/^\s*dr\.?\s+/i, '').replace(/\s+dr\.?\s*$/i, '').trim();
+    if (id && propre) this.prescripteursExternes.set(id, propre);
+  }
+
+  private prescripteurExterne(id: string): MedecinView | null {
+    const nom = this.prescripteursExternes.get(id);
+    return nom ? { id, nom, prenom: '', specialite: null } : null;
+  }
+
+  /**
    * JWT du compte de service auprès de l'écosystème d'authentification CHU — nécessaire
    * pour interroger GET /users (service utilisateurs), qui exige un token valide. Mis en
    * cache jusqu'à ~1 minute avant expiration, puis renouvelé automatiquement. Les appels
@@ -235,7 +253,7 @@ export class MedecinsService {
     outField: string,
   ): Promise<T & Record<string, MedecinView | null>> {
     const id = row[idField] as unknown as string | null | undefined;
-    const found = id ? await this.getUserById(id) : null;
+    const found = id ? (await this.getUserById(id)) ?? this.prescripteurExterne(id) : null;
     return { ...row, [outField]: found } as T & Record<string, MedecinView | null>;
   }
 
@@ -258,7 +276,7 @@ export class MedecinsService {
       ),
     ];
     const entries = await Promise.all(
-      ids.map(async (id) => [id, await this.getUserById(id)] as const),
+      ids.map(async (id) => [id, (await this.getUserById(id)) ?? this.prescripteurExterne(id)] as const),
     );
     const map = new Map(entries);
     return rows.map((r) => {
