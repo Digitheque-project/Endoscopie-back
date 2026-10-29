@@ -4,8 +4,11 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { GlobalExceptionFilter } from './prisma/global-exception.filter';
+import { resoudreIdentiteEndoscopie } from './config/endoscopie-service';
 
 async function bootstrap() {
+  // Avant tout module : l'identité (service, CHU) sert dès leur initialisation.
+  await resoudreIdentiteEndoscopie();
   const app = await NestFactory.create(AppModule);
   app.useGlobalFilters(new GlobalExceptionFilter());
   const frontendOrigins = process.env.FRONTEND_URL

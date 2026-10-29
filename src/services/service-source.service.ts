@@ -8,14 +8,8 @@ import {
   ServiceSourceResponseDto,
   WebhookNotificationDto,
 } from '../dto/service-source.dto';
-
-// Alias legacy — même gateway CHU que le reste de l'écosystème (voir
-// config/endoscopie-service.ts), conservé ici en variable dédiée pour ne pas ajouter
-// une dépendance croisée avec ce fichier de config pour un seul usage.
-const NOTIFICATION_SERVICE_URL =
-  process.env.NOTIFICATION_SERVICE_URL ||
-  process.env.GATEWAY_API_URL ||
-  'https://gateway-h36x.onrender.com';
+import { getPublicBaseUrl } from '../config/endoscopie-service';
+import { getNotificationApiUrl } from '../config/notification-service';
 
 @Injectable()
 export class ServiceSourceService {
@@ -90,9 +84,7 @@ export class ServiceSourceService {
       where: { actif: true },
     });
 
-    const apiUrl =
-      process.env.API_URL || 'https://endoscopie-api.onrender.com';
-    const lienResultat = `${apiUrl}/api/examens/resultats/${prescriptionId}`;
+    const lienResultat = `${getPublicBaseUrl()}/api/examens/resultats/${prescriptionId}`;
 
     const notification: WebhookNotificationDto = {
       event: 'EXAMEN_TERMINE',
@@ -132,7 +124,7 @@ export class ServiceSourceService {
       // gateway CHU : jeton Bearer obligatoire.
       const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
       const response = await fetch(
-        `${NOTIFICATION_SERVICE_URL}/api/notifications/webhook`,
+        `${getNotificationApiUrl()}/api/notifications/webhook`,
         {
           method: 'POST',
           headers: {

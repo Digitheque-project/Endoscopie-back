@@ -143,7 +143,7 @@ export class MedecinsService {
     const serviceId = getEndoscopieAuthServiceId();
     if (!serviceId) {
       this.logger.warn(
-        'ENDOSCOPIE_AUTH_SERVICE_ID non configuré : liste des médecins indisponible.',
+        'Identité du service Endoscopie non résolue : liste des médecins indisponible.',
       );
       return [];
     }

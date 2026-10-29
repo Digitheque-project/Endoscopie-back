@@ -19,6 +19,7 @@ import {
   getEndoscopieAuthChuId,
   getEndoscopieAuthServiceId,
   getPrescriptionExtApiUrl,
+  getPublicBaseUrl,
   getServiceRegistryApiUrl,
 } from './config/endoscopie-service';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
@@ -2632,10 +2633,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         sharedAt: new Date(),
       },
     });
-    const apiUrl = process.env.PUBLIC_API_URL || 'http://localhost:3333';
     return {
       token,
-      shareUrl: `${apiUrl}/api/resultats/public/${token}`,
+      shareUrl: `${getPublicBaseUrl()}/api/resultats/public/${token}`,
     };
   }
 

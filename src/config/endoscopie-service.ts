@@ -8,28 +8,120 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/**
+ * Identité du service : le service « Endoscopie » et son CHU, tels qu'ils figurent dans
+ * le jeton du compte de service (voir resoudreIdentiteEndoscopie, appelée au démarrage).
+ * Jamais figée en variable d'environnement : le même code sert l'Endoscopie de
+ * n'importe quel CHU.
+ */
+let identite: { serviceId: string; chuId: string } | null = null;
+
+function identiteResolue(): { serviceId: string; chuId: string } {
+  if (!identite) {
+    throw new Error(
+      'Identité du service Endoscopie non résolue : vérifiez CHU_SERVICE_ACCOUNT_EMAIL / ' +
+        'CHU_SERVICE_ACCOUNT_PASSWORD (compte rattaché au service « Endoscopie » de son CHU).',
+    );
+  }
+  return identite;
+}
+
 export function getEndoscopieServiceId(override?: string): string {
-  return override?.trim() || requireEnv('ENDOSCOPIE_SERVICE_ID');
+  return override?.trim() || identiteResolue().serviceId;
 }
 
 export function getEndoscopieChuId(override?: string): string {
-  return override?.trim() || requireEnv('ENDOSCOPIE_CHU_ID');
+  return override?.trim() || identiteResolue().chuId;
 }
 
 /**
- * ID service Endoscopie tel qu'enregistré dans le service d'authentification central
- * (voir AUTH_ENDOSCOPIE_SERVICE_ID côté front). Distinct de ENDOSCOPIE_SERVICE_ID :
- * certaines prescriptions externes multi-services sont taguées avec l'un ou l'autre
- * selon la source (saisie directe sur le service prescription vs. via l'écosystème
- * d'authentification), donc on interroge les deux pour ne rien manquer.
+ * Même identifiant que getEndoscopieServiceId : le registre central est désormais la seule
+ * source. Conservé pour les appelants qui interrogeaient deux identifiants distincts.
  */
 export function getEndoscopieAuthServiceId(): string | null {
-  return process.env.ENDOSCOPIE_AUTH_SERVICE_ID?.trim() || null;
+  return identite?.serviceId ?? null;
 }
 
 /** Voir getEndoscopieAuthServiceId — équivalent pour le CHU. */
 export function getEndoscopieAuthChuId(): string | null {
-  return process.env.ENDOSCOPIE_AUTH_CHU_ID?.trim() || null;
+  return identite?.chuId ?? null;
+}
+
+/**
+ * Lit l'identité du service dans le jeton du compte de service (entrée services[] nommée
+ * Endoscopie). Réessaie tant que la passerelle ou l'authentification ne répondent pas
+ * (réveil des services Render), puis abandonne sans bloquer le démarrage.
+ */
+export async function resoudreIdentiteEndoscopie(
+  tentatives = 12,
+): Promise<void> {
+  const gateway = getOptionalGatewayApiUrl();
+  const credentials = getServiceAccountCredentials();
+  if (!gateway || !credentials) {
+    console.error(
+      '[Endoscopie] GATEWAY_API_URL ou compte de service manquant : identité non résolue.',
+    );
+    return;
+  }
+  for (let i = 1; i <= tentatives; i++) {
+    try {
+      const res = await fetch(`${gateway}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+      });
+      if (res.ok) {
+        const { accessToken } = (await res.json()) as { accessToken?: string };
+        const payload = accessToken
+          ? (JSON.parse(
+              Buffer.from(accessToken.split('.')[1], 'base64url').toString(
+                'utf8',
+              ),
+            ) as {
+              services?: Array<{
+                serviceId?: string;
+                serviceName?: string;
+                chu?: { id?: string };
+              }>;
+            })
+          : null;
+        const entree = payload?.services?.find((s) =>
+          /endoscop/i.test(s.serviceName ?? ''),
+        );
+        if (entree?.serviceId && entree.chu?.id) {
+          identite = { serviceId: entree.serviceId, chuId: entree.chu.id };
+          console.log(
+            `[Endoscopie] Identité résolue : service ${entree.serviceId}, CHU ${entree.chu.id}`,
+          );
+          return;
+        }
+        console.error(
+          "[Endoscopie] Le compte de service n'est rattaché à aucun service « Endoscopie ».",
+        );
+        return;
+      }
+      console.warn(
+        `[Endoscopie] Connexion du compte de service refusée (${res.status}), essai ${i}/${tentatives}`,
+      );
+    } catch (e) {
+      console.warn(
+        `[Endoscopie] Passerelle injoignable (${e instanceof Error ? e.message : e}), essai ${i}/${tentatives}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 10_000));
+  }
+}
+
+/**
+ * Adresse publique de ce backend (liens de résultats partagés, webhook) : fournie par
+ * Render (RENDER_EXTERNAL_URL), ou PUBLIC_API_URL ailleurs (réseau local du CHU).
+ */
+export function getPublicBaseUrl(): string {
+  return (
+    process.env.PUBLIC_API_URL?.trim().replace(/\/$/, '') ||
+    process.env.RENDER_EXTERNAL_URL?.trim().replace(/\/$/, '') ||
+    `http://localhost:${process.env.PORT ?? '3333'}`
+  );
 }
 
 /**
@@ -109,7 +201,10 @@ export function getAuthEcosystemLoginUrl(): string | null {
 }
 
 /** Identifiants du compte de service utilisé par le backend pour s'authentifier auprès de l'écosystème CHU. */
-export function getServiceAccountCredentials(): { email: string; password: string } | null {
+export function getServiceAccountCredentials(): {
+  email: string;
+  password: string;
+} | null {
   const email = process.env.CHU_SERVICE_ACCOUNT_EMAIL?.trim();
   const password = process.env.CHU_SERVICE_ACCOUNT_PASSWORD?.trim();
   return email && password ? { email, password } : null;

@@ -56,7 +56,7 @@ export class NotificationInboxController {
       return {
         ok: true,
         ignored: true,
-        reason: 'Notification sans ENDOSCOPIE_SERVICE_ID',
+        reason: 'Notification sans service Endoscopie',
         webhookUrl: this.inbox.getPublicWebhookUrl(),
       };
     }
