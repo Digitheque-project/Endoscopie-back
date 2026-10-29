@@ -11,6 +11,8 @@ async function bootstrap() {
   await resoudreIdentiteEndoscopie();
   const app = await NestFactory.create(AppModule);
   app.useGlobalFilters(new GlobalExceptionFilter());
+  // Facultatif : le navigateur passe par le relais /api/* du front (même origine) ;
+  // FRONTEND_URL ne sert qu'à autoriser un appel direct depuis une autre origine.
   const frontendOrigins = process.env.FRONTEND_URL
     ? process.env.FRONTEND_URL.split(',').map((o) => o.trim())
     : ['http://localhost:3000', 'http://127.0.0.1:3000'];
