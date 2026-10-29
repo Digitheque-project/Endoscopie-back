@@ -1744,7 +1744,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         // passage "prêt pour décision" l'intéresse.
         const existingRdv = await this.prisma.rendezVous.findUnique({
           where: { prescriptionId: resolvedPrescriptionId },
-          select: { id: true },
+          select: { id: true, dateHeureDebut: true },
         });
 
         await this.prisma.prescription.updateMany({
@@ -1757,6 +1757,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           update: rendezVousPayload,
           create: rendezVousPayload,
         });
+
+        if (!existingRdv) {
+          this.signalerRdvAccueil('FIXE', rdv);
+        } else if (
+          existingRdv.dateHeureDebut.getTime() !== rdv.dateHeureDebut.getTime()
+        ) {
+          this.signalerRdvAccueil('DEPLACE', rdv);
+        }
 
         if (!existingRdv) {
           this.notifyPatientPlanifie(resolvedPrescriptionId, data).catch((e) => {
@@ -1776,6 +1784,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           prescription: true,
         },
       });
+      this.signalerRdvAccueil('FIXE', created);
       const withMedecin = await this.medecinsService.attachMedecin(
         created,
         'medecinId',
@@ -1789,6 +1798,65 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       console.error('Erreur lors de la création du rendez-vous:', error);
       throw error;
     }
+  }
+
+  /**
+   * Prévient l'Accueil, en temps réel, qu'un rendez-vous vient d'être fixé, déplacé ou
+   * annulé (acceuil-back, POST /accueil/rendez-vous/evenement) : il le notifie à l'Accueil
+   * du CHU de ce service si le patient y est inscrit. Fire-and-forget : un incident de
+   * communication ne doit jamais bloquer la planification.
+   */
+  private signalerRdvAccueil(
+    evenement: 'FIXE' | 'DEPLACE' | 'ANNULE',
+    rdv: {
+      id: string;
+      patientId: string | null;
+      dateHeureDebut: Date;
+      prescriptionId: string | null;
+      typeExamenSecondaire?: string | null;
+    },
+  ): void {
+    if (!rdv.patientId) return;
+    const patientId = rdv.patientId;
+    (async () => {
+      const token = await this.medecinsService.getServiceAccountToken();
+      if (!token) return;
+      const prescription = rdv.prescriptionId
+        ? await this.prisma.prescription.findUnique({
+            where: { id: rdv.prescriptionId },
+            select: { typeExamen: true },
+          })
+        : null;
+      const examen =
+        [prescription?.typeExamen, rdv.typeExamenSecondaire]
+          .filter(Boolean)
+          .join(' + ') || undefined;
+      const url = `${getAccueilApiUrl()}/accueil/rendez-vous/evenement`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          evenement,
+          cle: `endoscopie-${rdv.id}`,
+          service: 'Endoscopie',
+          patientId,
+          debut: rdv.dateHeureDebut.toISOString(),
+          examen,
+        }),
+      });
+      if (!res.ok) {
+        this.logger.warn(
+          `Accueil non prévenu du RDV ${rdv.id} (${evenement}) : ${res.status}`,
+        );
+      }
+    })().catch((e) =>
+      this.logger.warn(
+        `Accueil non prévenu du RDV ${rdv.id} (${evenement}) : ${e instanceof Error ? e.message : e}`,
+      ),
+    );
   }
 
   /** Résout patient + type d'examen pour notifier le médecin qu'un rendez-vous vient d'être planifié. */
@@ -2050,6 +2118,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
+    if (data.statut === 'Annulé' && existing.statut !== 'Annulé') {
+      this.signalerRdvAccueil('ANNULE', updated);
+    } else if (
+      reschedule &&
+      updated.dateHeureDebut.getTime() !== existing.dateHeureDebut.getTime()
+    ) {
+      this.signalerRdvAccueil('DEPLACE', updated);
+    }
+
     // Reflète l'étape de la décision d'anesthésie sur la prescription elle-même,
     // pour qu'elle réapparaisse au bon statut dans le Fil de prescription du Major.
     // 'Annulé' couvre le refus d'un examen par le médecin (bouton "Refuser").
@@ -2202,6 +2279,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         return { success: true, id };
       }
       throw e;
+    }
+    if (existing.statut !== 'Annulé') {
+      this.signalerRdvAccueil('ANNULE', existing);
     }
 
     if (existing.prescriptionId) {
