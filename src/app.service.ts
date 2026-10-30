@@ -20,6 +20,8 @@ import {
   getEndoscopieAuthServiceId,
   getPrescriptionExtApiUrl,
   getPublicBaseUrl,
+  getServicesEndoscopie,
+  chuDuService,
   getServiceRegistryApiUrl,
 } from './config/endoscopie-service';
 import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
@@ -292,14 +294,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private async fetchExternalPrescriptionsRaw(
     serviceIdOverride?: string,
   ): Promise<ExternalEndoscopiePrescription[]> {
-    const primaryServiceId = this.getEndoscopieServiceId(serviceIdOverride);
-    const primaryChuId = getEndoscopieChuId();
-    const authServiceId = getEndoscopieAuthServiceId();
-    const authChuId = getEndoscopieAuthChuId();
-
-    const serviceIds = [...new Set([primaryServiceId, authServiceId].filter((v): v is string => Boolean(v)))];
-    const chuIds = [...new Set([primaryChuId, authChuId].filter((v): v is string => Boolean(v)))];
-    const pairs = serviceIds.flatMap((s) => chuIds.map((c) => [s, c] as const));
+    // Service précisé (requête d'un utilisateur) : ce seul service et son CHU.
+    // Sinon (traitements de fond) : chaque service Endoscopie du registre, un par CHU.
+    const pairs = serviceIdOverride
+      ? [[serviceIdOverride, chuDuService(serviceIdOverride) ?? getEndoscopieChuId()] as const]
+      : getServicesEndoscopie().map((s) => [s.serviceId, s.chuId] as const);
 
     const results = await Promise.all(pairs.map(([s, c]) => this.fetchExternalPrescriptionsFor(s, c)));
     const byId = new Map<string, ExternalEndoscopiePrescription>();
@@ -1815,10 +1814,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       dateHeureDebut: Date;
       prescriptionId: string | null;
       typeExamenSecondaire?: string | null;
+      serviceId: string;
     },
   ): void {
     if (!rdv.patientId) return;
     const patientId = rdv.patientId;
+    // CHU du service qui a fixé le RDV : seul l'Accueil de ce CHU sera prévenu.
+    const chuId = chuDuService(rdv.serviceId);
+    if (!chuId) return;
     (async () => {
       const token = await this.medecinsService.getServiceAccountToken();
       if (!token) return;
@@ -1843,6 +1846,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           evenement,
           cle: `endoscopie-${rdv.id}`,
           service: 'Endoscopie',
+          chuId,
           patientId,
           debut: rdv.dateHeureDebut.toISOString(),
           examen,

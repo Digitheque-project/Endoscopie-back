@@ -8,100 +8,129 @@ function requireEnv(name: string): string {
   return value;
 }
 
-/**
- * Identité du service : le service « Endoscopie » et son CHU, tels qu'ils figurent dans
- * le jeton du compte de service (voir resoudreIdentiteEndoscopie, appelée au démarrage).
- * Jamais figée en variable d'environnement : le même code sert l'Endoscopie de
- * n'importe quel CHU.
- */
-let identite: { serviceId: string; chuId: string } | null = null;
+import * as jwt from 'jsonwebtoken';
 
-function identiteResolue(): { serviceId: string; chuId: string } {
-  if (!identite) {
-    throw new Error(
-      'Identité du service Endoscopie non résolue : vérifiez CHU_SERVICE_ACCOUNT_EMAIL / ' +
-        'CHU_SERVICE_ACCOUNT_PASSWORD (compte rattaché au service « Endoscopie » de son CHU).',
-    );
-  }
-  return identite;
+/**
+ * Services « Endoscopie » du registre central (un par CHU), lus au démarrage par leur
+ * nom (voir resoudreIdentiteEndoscopie). Jamais d'identifiant en variable d'environnement
+ * ni de compte utilisateur : le même code sert l'Endoscopie de n'importe quel CHU.
+ */
+let servicesEndoscopie: Array<{ serviceId: string; chuId: string }> = [];
+
+/** Tous les services Endoscopie connus (un par CHU), pour les traitements de fond. */
+export function getServicesEndoscopie(): Array<{
+  serviceId: string;
+  chuId: string;
+}> {
+  return servicesEndoscopie;
+}
+
+/** CHU d'un service Endoscopie du registre. */
+export function chuDuService(serviceId: string): string | null {
+  return (
+    servicesEndoscopie.find((s) => s.serviceId === serviceId)?.chuId ?? null
+  );
+}
+
+/** Service par défaut : l'unique Endoscopie du registre (déploiement d'un seul CHU). */
+function serviceParDefaut(): { serviceId: string; chuId: string } {
+  if (servicesEndoscopie.length === 1) return servicesEndoscopie[0];
+  throw new Error(
+    servicesEndoscopie.length === 0
+      ? 'Aucun service « Endoscopie » trouvé dans le registre central (voir les logs de démarrage).'
+      : 'Plusieurs services « Endoscopie » dans le registre : le service doit être précisé par la requête.',
+  );
 }
 
 export function getEndoscopieServiceId(override?: string): string {
-  return override?.trim() || identiteResolue().serviceId;
+  return override?.trim() || serviceParDefaut().serviceId;
 }
 
 export function getEndoscopieChuId(override?: string): string {
-  return override?.trim() || identiteResolue().chuId;
+  return override?.trim() || serviceParDefaut().chuId;
 }
 
-/**
- * Même identifiant que getEndoscopieServiceId : le registre central est désormais la seule
- * source. Conservé pour les appelants qui interrogeaient deux identifiants distincts.
- */
+/** Conservés pour les appelants historiques : même source que ci-dessus. */
 export function getEndoscopieAuthServiceId(): string | null {
-  return identite?.serviceId ?? null;
+  return servicesEndoscopie.length === 1
+    ? servicesEndoscopie[0].serviceId
+    : null;
 }
 
-/** Voir getEndoscopieAuthServiceId — équivalent pour le CHU. */
 export function getEndoscopieAuthChuId(): string | null {
-  return identite?.chuId ?? null;
+  return servicesEndoscopie.length === 1 ? servicesEndoscopie[0].chuId : null;
 }
 
 /**
- * Lit l'identité du service dans le jeton du compte de service (entrée services[] nommée
- * Endoscopie). Réessaie tant que la passerelle ou l'authentification ne répondent pas
- * (réveil des services Render), puis abandonne sans bloquer le démarrage.
+ * Jeton de SERVICE pour les appels serveur-à-serveur (sans utilisateur connecté) :
+ * signé avec le secret commun de la plateforme, comme les autres services (clinique,
+ * prescription). Aucun compte utilisateur, aucun mot de passe.
+ */
+export function jetonDeService(): string | null {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return null;
+  return jwt.sign(
+    {
+      userId: 'service-endoscopie',
+      sub: 'service-endoscopie',
+      name: 'Endoscopie',
+      firstname: 'Service',
+      role: 'SERVICE',
+      services: [],
+    },
+    secret,
+    { expiresIn: '10m' },
+  );
+}
+
+/**
+ * Lit dans le registre central les services nommés « Endoscopie » et leur CHU.
+ * Réessaie tant que la passerelle ne répond pas (réveil des services Render), puis
+ * abandonne sans bloquer le démarrage.
  */
 export async function resoudreIdentiteEndoscopie(
   tentatives = 12,
 ): Promise<void> {
   const gateway = getOptionalGatewayApiUrl();
-  const credentials = getServiceAccountCredentials();
-  if (!gateway || !credentials) {
+  const jeton = jetonDeService();
+  if (!gateway || !jeton) {
     console.error(
-      '[Endoscopie] GATEWAY_API_URL ou compte de service manquant : identité non résolue.',
+      '[Endoscopie] GATEWAY_API_URL ou JWT_SECRET manquant : services non résolus.',
     );
     return;
   }
   for (let i = 1; i <= tentatives; i++) {
     try {
-      const res = await fetch(`${gateway}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials),
+      const res = await fetch(`${gateway}/services`, {
+        headers: { Authorization: `Bearer ${jetonDeService() ?? jeton}` },
       });
       if (res.ok) {
-        const { accessToken } = (await res.json()) as { accessToken?: string };
-        const payload = accessToken
-          ? (JSON.parse(
-              Buffer.from(accessToken.split('.')[1], 'base64url').toString(
-                'utf8',
-              ),
-            ) as {
-              services?: Array<{
-                serviceId?: string;
-                serviceName?: string;
-                chu?: { id?: string };
-              }>;
-            })
-          : null;
-        const entree = payload?.services?.find((s) =>
-          /endoscop/i.test(s.serviceName ?? ''),
-        );
-        if (entree?.serviceId && entree.chu?.id) {
-          identite = { serviceId: entree.serviceId, chuId: entree.chu.id };
-          console.log(
-            `[Endoscopie] Identité résolue : service ${entree.serviceId}, CHU ${entree.chu.id}`,
-          );
-          return;
-        }
-        console.error(
-          "[Endoscopie] Le compte de service n'est rattaché à aucun service « Endoscopie ».",
+        const data = (await res.json()) as unknown;
+        const liste = (
+          Array.isArray(data)
+            ? data
+            : ((data as { data?: unknown[] }).data ?? [])
+        ) as Array<{
+          id?: string;
+          name?: string;
+          chuId?: string;
+        }>;
+        servicesEndoscopie = liste
+          .filter((s) => /endoscop/i.test(s.name ?? '') && s.id && s.chuId)
+          .map((s) => ({
+            serviceId: s.id as string,
+            chuId: s.chuId as string,
+          }));
+        console.log(
+          `[Endoscopie] ${servicesEndoscopie.length} service(s) Endoscopie dans le registre : ` +
+            servicesEndoscopie
+              .map((s) => `${s.serviceId} (CHU ${s.chuId})`)
+              .join(', '),
         );
         return;
       }
       console.warn(
-        `[Endoscopie] Connexion du compte de service refusée (${res.status}), essai ${i}/${tentatives}`,
+        `[Endoscopie] Registre des services : ${res.status}, essai ${i}/${tentatives}`,
       );
     } catch (e) {
       console.warn(
@@ -188,24 +217,4 @@ export function getPrescriptionExtApiUrl(): string {
 export function getDossierPatientApiUrl(): string | null {
   const base = getOptionalGatewayApiUrl();
   return base ? `${base}/dossier-patient` : null;
-}
-
-/**
- * URL de connexion de l'écosystème d'authentification partagé du CHU — le service
- * prescription (et d'autres) accepte le même JWT que celui utilisé par nos utilisateurs
- * pour se connecter à l'app. Notre backend s'y connecte lui-même (compte de service)
- * pour obtenir un token à joindre à ses appels serveur-à-serveur.
- */
-export function getAuthEcosystemLoginUrl(): string | null {
-  return getOptionalGatewayApiUrl();
-}
-
-/** Identifiants du compte de service utilisé par le backend pour s'authentifier auprès de l'écosystème CHU. */
-export function getServiceAccountCredentials(): {
-  email: string;
-  password: string;
-} | null {
-  const email = process.env.CHU_SERVICE_ACCOUNT_EMAIL?.trim();
-  const password = process.env.CHU_SERVICE_ACCOUNT_PASSWORD?.trim();
-  return email && password ? { email, password } : null;
 }

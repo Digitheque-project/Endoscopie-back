@@ -1,8 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
-  getAuthEcosystemLoginUrl,
-  getServiceAccountCredentials,
   getEndoscopieAuthServiceId,
+  jetonDeService,
 } from '../config/endoscopie-service';
 import { getCurrentUserToken } from '../auth/request-context';
 
@@ -28,11 +27,6 @@ function getUserServiceUrl(): string | null {
 export class MedecinsService {
   private readonly logger = new Logger(MedecinsService.name);
 
-  private serviceAccountToken: { token: string; expiresAt: number } | null =
-    null;
-  private serviceAccountLoginFailedUntil = 0;
-  private serviceAccountLoginInFlight: Promise<string | null> | null = null;
-
   /**
    * Prescripteurs hors plateforme (ex. médecin de ville saisi à l'Accueil : son « id »
    * est un numéro ONM, pas un compte du service utilisateurs) — nom transmis avec la
@@ -41,8 +35,14 @@ export class MedecinsService {
    */
   private readonly prescripteursExternes = new Map<string, string>();
 
-  rememberPrescripteurExterne(id: string | null | undefined, nom: string | null | undefined): void {
-    const propre = (nom ?? '').replace(/^\s*dr\.?\s+/i, '').replace(/\s+dr\.?\s*$/i, '').trim();
+  rememberPrescripteurExterne(
+    id: string | null | undefined,
+    nom: string | null | undefined,
+  ): void {
+    const propre = (nom ?? '')
+      .replace(/^\s*dr\.?\s+/i, '')
+      .replace(/\s+dr\.?\s*$/i, '')
+      .trim();
     if (id && propre) this.prescripteursExternes.set(id, propre);
   }
 
@@ -63,57 +63,8 @@ export class MedecinsService {
    * getEndoscopieMedecins ci-dessous).
    */
   async getServiceAccountToken(): Promise<string | null> {
-    const loginUrl = getAuthEcosystemLoginUrl();
-    const credentials = getServiceAccountCredentials();
-    if (!loginUrl || !credentials) return null;
-
-    if (
-      this.serviceAccountToken &&
-      this.serviceAccountToken.expiresAt > Date.now() + 60_000
-    ) {
-      return this.serviceAccountToken.token;
-    }
-    if (Date.now() < this.serviceAccountLoginFailedUntil) return null;
-    if (this.serviceAccountLoginInFlight) return this.serviceAccountLoginInFlight;
-
-    this.serviceAccountLoginInFlight = (async () => {
-      try {
-        const res = await fetch(`${loginUrl}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(credentials),
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!res.ok) {
-          this.logger.warn(
-            `Connexion du compte de service échouée (${res.status}) auprès de ${loginUrl}`,
-          );
-          this.serviceAccountLoginFailedUntil = Date.now() + 30_000;
-          return null;
-        }
-        const data = (await res.json()) as { accessToken?: string };
-        if (!data.accessToken) return null;
-
-        const payload = data.accessToken.split('.')[1];
-        const decoded = payload
-          ? JSON.parse(Buffer.from(payload, 'base64').toString())
-          : null;
-        const expiresAt = decoded?.exp ? decoded.exp * 1000 : Date.now() + 15 * 60_000;
-
-        this.serviceAccountToken = { token: data.accessToken, expiresAt };
-        return data.accessToken;
-      } catch (e) {
-        this.logger.warn(
-          `Erreur lors de la connexion du compte de service: ${e instanceof Error ? e.message : e}`,
-        );
-        this.serviceAccountLoginFailedUntil = Date.now() + 30_000;
-        return null;
-      } finally {
-        this.serviceAccountLoginInFlight = null;
-      }
-    })();
-
-    return this.serviceAccountLoginInFlight;
+    // Jeton de service signé (aucun compte utilisateur) — voir jetonDeService.
+    return jetonDeService();
   }
 
   /**
@@ -137,7 +88,8 @@ export class MedecinsService {
       return [];
     }
 
-    const token = getCurrentUserToken() ?? (await this.getServiceAccountToken());
+    const token =
+      getCurrentUserToken() ?? (await this.getServiceAccountToken());
     if (!token) return [];
 
     const serviceId = getEndoscopieAuthServiceId();
@@ -170,9 +122,9 @@ export class MedecinsService {
       const items: UserServiceUser[] = Array.isArray(data)
         ? (data as UserServiceUser[])
         : Array.isArray((data as { users?: unknown })?.users)
-          ? ((data as { users: UserServiceUser[] }).users)
+          ? (data as { users: UserServiceUser[] }).users
           : Array.isArray((data as { data?: unknown })?.data)
-            ? ((data as { data: UserServiceUser[] }).data)
+            ? (data as { data: UserServiceUser[] }).data
             : [];
 
       return items.map((u) => ({
@@ -197,8 +149,9 @@ export class MedecinsService {
   ): Promise<T & Record<string, MedecinView | null>> {
     const id = row[idField] as unknown as string | null | undefined;
     const medecins = id ? await this.getEndoscopieMedecins() : [];
-    const found = id ? medecins.find((m) => m.id === id) ?? null : null;
-    return { ...row, [outField]: found } as T & Record<string, MedecinView | null>;
+    const found = id ? (medecins.find((m) => m.id === id) ?? null) : null;
+    return { ...row, [outField]: found } as T &
+      Record<string, MedecinView | null>;
   }
 
   /** Attache le médecin correspondant à chaque ligne d'une liste, en un seul appel groupé. */
@@ -212,7 +165,7 @@ export class MedecinsService {
     const map = new Map(medecins.map((m) => [m.id, m]));
     return rows.map((r) => {
       const id = r[idField] as unknown as string | null | undefined;
-      return { ...r, [outField]: id ? map.get(id) ?? null : null } as T &
+      return { ...r, [outField]: id ? (map.get(id) ?? null) : null } as T &
         Record<string, MedecinView | null>;
     });
   }
@@ -227,17 +180,26 @@ export class MedecinsService {
   async getUserById(id: string): Promise<MedecinView | null> {
     const userServiceUrl = getUserServiceUrl();
     if (!userServiceUrl) return null;
-    const token = getCurrentUserToken() ?? (await this.getServiceAccountToken());
+    const token =
+      getCurrentUserToken() ?? (await this.getServiceAccountToken());
     if (!token) return null;
 
     try {
-      const res = await fetch(`${userServiceUrl}/users/${encodeURIComponent(id)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: AbortSignal.timeout(8000),
-      });
+      const res = await fetch(
+        `${userServiceUrl}/users/${encodeURIComponent(id)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(8000),
+        },
+      );
       if (!res.ok) return null;
       const u = (await res.json()) as UserServiceUser;
-      return { id: u.id, nom: u.name, prenom: u.firstname, specialite: u.job ?? null };
+      return {
+        id: u.id,
+        nom: u.name,
+        prenom: u.firstname,
+        specialite: u.job ?? null,
+      };
     } catch (e) {
       this.logger.warn(
         `Résolution utilisateur ${id} échouée: ${e instanceof Error ? e.message : e}`,
@@ -253,8 +215,11 @@ export class MedecinsService {
     outField: string,
   ): Promise<T & Record<string, MedecinView | null>> {
     const id = row[idField] as unknown as string | null | undefined;
-    const found = id ? (await this.getUserById(id)) ?? this.prescripteurExterne(id) : null;
-    return { ...row, [outField]: found } as T & Record<string, MedecinView | null>;
+    const found = id
+      ? ((await this.getUserById(id)) ?? this.prescripteurExterne(id))
+      : null;
+    return { ...row, [outField]: found } as T &
+      Record<string, MedecinView | null>;
   }
 
   /**
@@ -276,12 +241,18 @@ export class MedecinsService {
       ),
     ];
     const entries = await Promise.all(
-      ids.map(async (id) => [id, (await this.getUserById(id)) ?? this.prescripteurExterne(id)] as const),
+      ids.map(
+        async (id) =>
+          [
+            id,
+            (await this.getUserById(id)) ?? this.prescripteurExterne(id),
+          ] as const,
+      ),
     );
     const map = new Map(entries);
     return rows.map((r) => {
       const id = r[idField] as unknown as string | null | undefined;
-      return { ...r, [outField]: id ? map.get(id) ?? null : null } as T &
+      return { ...r, [outField]: id ? (map.get(id) ?? null) : null } as T &
         Record<string, MedecinView | null>;
     });
   }
