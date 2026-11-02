@@ -1804,10 +1804,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Annonce un rendez-vous fixé, déplacé ou annulé :
-   *  - à l'Accueil, via acceuil-back (POST /accueil/rendez-vous/evenement), comme avant ;
-   *  - au service d'où la demande d'examen a été envoyée quand ce n'est pas l'Accueil
-   *    (hospitalisation, consultation externe), qui n'en était jamais prévenu.
+   * Annonce un rendez-vous fixé, déplacé ou annulé au service d'où la demande d'examen a
+   * été envoyée, et à lui seul (les équipes des services sont distinctes) :
+   *  - Accueil : via acceuil-back (POST /accueil/rendez-vous/evenement) ;
+   *  - consultation externe : notification à ce service ET à l'Accueil (le patient attend
+   *    son rendez-vous à l'Accueil) ;
+   *  - autre service (hospitalisation…) : notification à ce service seulement.
+   * L'Accueil ne relève plus l'Endoscopie de son côté (voir rdv-watcher d'accueil-front).
    * Fire-and-forget : un incident de communication ne doit jamais bloquer la planification.
    */
   private signalerRdvAccueil(
@@ -1844,9 +1847,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
             .then(({ ext }) => ext?.serviceIdSource ?? null)
             .catch(() => null)
         : null;
-      if (serviceIdSource && origineDemande(serviceIdSource) !== 'ACCUEIL') {
+      const origine = origineDemande(serviceIdSource);
+      if (serviceIdSource && origine !== 'ACCUEIL') {
         await this.notifierRdvAuDemandeur(evenement, rdv, serviceIdSource, examen);
       }
+      // L'Accueil n'est concerné que par ses propres demandes et celles de la consultation
+      // externe (le patient attend à l'Accueil). Origine inconnue : prévenu, par prudence.
+      if (origine === 'AUTRE') return;
       const url = `${getAccueilApiUrl()}/accueil/rendez-vous/evenement`;
       const res = await fetch(url, {
         method: 'POST',
