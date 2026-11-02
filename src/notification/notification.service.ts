@@ -36,6 +36,10 @@ export class NotificationService {
     // source) : ne jamais la pousser dans notre propre boîte locale, elle n'est pas
     // pour nous.
     const isForOwnService = targetServiceId === ownServiceId;
+    if (payload.localSeulement) {
+      if (isForOwnService) this.pushToInbox({}, payload);
+      return null;
+    }
     const body = {
       serviceId: targetServiceId,
       title: payload.recipientName || payload.emitterName || 'Notification Endoscopie',
@@ -175,6 +179,7 @@ export class NotificationService {
           patient?: { nom: string; prenom: string } | null;
           medecinPrescripteur?: { nom: string; prenom: string } | null;
           createdAt?: string | Date | null;
+          prescriptionExternalId?: string | null;
         }
       | Array<{
           id: string;
@@ -184,6 +189,7 @@ export class NotificationService {
           patient?: { nom: string; prenom: string } | null;
           medecinPrescripteur?: { nom: string; prenom: string } | null;
           createdAt?: string | Date | null;
+          prescriptionExternalId?: string | null;
         }>,
   ): Promise<unknown | null> {
     const list = Array.isArray(prescription) ? prescription : [prescription];
@@ -198,7 +204,12 @@ export class NotificationService {
       : 'Médecin';
     const typeExamenLabel = list.map((p) => p.typeExamen).join(' + ');
 
+    // prescription_back a déjà notifié le service Endoscopie à la création de la
+    // prescription : une seconde copie dans le service notification apparaissait en
+    // double dans la cloche, avec un autre texte. Ici, seulement l'alerte en direct ;
+    // prescriptionId permet à la cloche de rapprocher les deux.
     return this.createNotification({
+      localSeulement: true,
       type: 'DEMANDE_EXAMEN',
       motif: `Nouvelle prescription endoscopie — ${typeExamenLabel}`,
       urgence: 3,
@@ -222,6 +233,7 @@ export class NotificationService {
         medecinName,
         motif: primary.motif ?? '',
         typeExamen: typeExamenLabel,
+        prescriptionId: primary.prescriptionExternalId ?? null,
       },
     });
   }

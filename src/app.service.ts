@@ -250,6 +250,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
               // seenExternalPrescriptionIds) et laisserait sinon croire à tort à une
               // arrivée du jour même.
               createdAt: d.createdAt,
+              prescriptionExternalId: d.prescriptionExternalId ?? null,
             })),
           );
         } catch (e) {

@@ -26,4 +26,10 @@ export type CreateNotificationPayload = {
    * du jour, laissant croire à tort à une toute nouvelle arrivée.
    */
   createdAt?: string;
+  /**
+   * Boîte locale seulement (alerte et son en direct), sans copie dans le service
+   * notification : l'événement y est déjà, publié par un autre service (ex. nouvelle
+   * prescription, notifiée par prescription_back dès sa création).
+   */
+  localSeulement?: boolean;
 };
