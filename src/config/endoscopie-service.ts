@@ -25,6 +25,37 @@ export function getServicesEndoscopie(): Array<{
   return servicesEndoscopie;
 }
 
+/** Tous les services du registre (nom et CHU), lus au même moment. */
+let servicesDuRegistre: Array<{ serviceId: string; nom: string; chuId: string }> = [];
+
+/**
+ * D'où vient une demande d'examen, d'après le nom de son service source dans le
+ * registre : son retour (rendez-vous, refus) ne va qu'au service qui l'a envoyée,
+ * plus l'Accueil quand c'est la consultation externe (le patient y attend). null si
+ * le service est inconnu du registre.
+ */
+export function origineDemande(
+  serviceIdSource: string | null | undefined,
+): 'ACCUEIL' | 'CONSULTATION_EXTERNE' | 'AUTRE' | null {
+  const s = servicesDuRegistre.find((x) => x.serviceId === serviceIdSource);
+  if (!s) return null;
+  if (/consultation\s*externe/i.test(s.nom)) return 'CONSULTATION_EXTERNE';
+  if (/accueil/i.test(s.nom)) return 'ACCUEIL';
+  return 'AUTRE';
+}
+
+/** Service Accueil du CHU d'un service donné. */
+export function accueilDuChuDe(serviceId: string | null | undefined): string | null {
+  const chuId = servicesDuRegistre.find((x) => x.serviceId === serviceId)?.chuId;
+  if (!chuId) return null;
+  return (
+    servicesDuRegistre.find((x) => x.chuId === chuId && /^accueil$/i.test(x.nom.trim()))
+      ?.serviceId ??
+    servicesDuRegistre.find((x) => x.chuId === chuId && /accueil/i.test(x.nom))?.serviceId ??
+    null
+  );
+}
+
 /** CHU d'un service Endoscopie du registre. */
 export function chuDuService(serviceId: string): string | null {
   return (
@@ -115,6 +146,9 @@ export async function resoudreIdentiteEndoscopie(
           name?: string;
           chuId?: string;
         }>;
+        servicesDuRegistre = liste
+          .filter((s) => s.id && s.chuId)
+          .map((s) => ({ serviceId: s.id as string, nom: s.name ?? '', chuId: s.chuId as string }));
         servicesEndoscopie = liste
           .filter((s) => /endoscop/i.test(s.name ?? '') && s.id && s.chuId)
           .map((s) => ({

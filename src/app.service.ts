@@ -10,6 +10,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from './prisma/prisma.service';
 import {
+  accueilDuChuDe,
   getAccueilApiUrl,
   getBlocApiUrl,
   getChuApiUrl,
@@ -18,6 +19,7 @@ import {
   getEndoscopieServiceId,
   getEndoscopieAuthChuId,
   getEndoscopieAuthServiceId,
+  origineDemande,
   getPrescriptionExtApiUrl,
   getPublicBaseUrl,
   getServicesEndoscopie,
@@ -28,7 +30,7 @@ import { CreateDossierCpaDto } from './dto/create-dossier-cpa.dto';
 import { UpdateDossierCpaDto } from './dto/update-dossier-cpa.dto';
 import { UpdateRendezVousDto } from './dto/update-rendezvous.dto';
 import { CreateNoteDossierDto } from './dto/create-note-dossier.dto';
-import { parseDateTimeAsUtc } from './utils/datetime.util';
+import { naifVersInstant, parseDateTimeAsUtc } from './utils/datetime.util';
 import { NotificationService } from './notification/notification.service';
 import { NotificationInboxService } from './notification/notification-inbox.service';
 import { ServiceSourceService } from './services/service-source.service';
@@ -1802,10 +1804,11 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Prévient l'Accueil, en temps réel, qu'un rendez-vous vient d'être fixé, déplacé ou
-   * annulé (acceuil-back, POST /accueil/rendez-vous/evenement) : il le notifie à l'Accueil
-   * du CHU de ce service si le patient y est inscrit. Fire-and-forget : un incident de
-   * communication ne doit jamais bloquer la planification.
+   * Annonce un rendez-vous fixé, déplacé ou annulé :
+   *  - à l'Accueil, via acceuil-back (POST /accueil/rendez-vous/evenement), comme avant ;
+   *  - au service d'où la demande d'examen a été envoyée quand ce n'est pas l'Accueil
+   *    (hospitalisation, consultation externe), qui n'en était jamais prévenu.
+   * Fire-and-forget : un incident de communication ne doit jamais bloquer la planification.
    */
   private signalerRdvAccueil(
     evenement: 'FIXE' | 'DEPLACE' | 'ANNULE',
@@ -1836,6 +1839,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         [prescription?.typeExamen, rdv.typeExamenSecondaire]
           .filter(Boolean)
           .join(' + ') || undefined;
+      const serviceIdSource = rdv.prescriptionId
+        ? await this.ensurePrescriptionAnchor(rdv.prescriptionId, rdv.serviceId)
+            .then(({ ext }) => ext?.serviceIdSource ?? null)
+            .catch(() => null)
+        : null;
+      if (serviceIdSource && origineDemande(serviceIdSource) !== 'ACCUEIL') {
+        await this.notifierRdvAuDemandeur(evenement, rdv, serviceIdSource, examen);
+      }
       const url = `${getAccueilApiUrl()}/accueil/rendez-vous/evenement`;
       const res = await fetch(url, {
         method: 'POST',
@@ -1849,7 +1860,10 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           service: 'Endoscopie',
           chuId,
           patientId,
-          debut: rdv.dateHeureDebut.toISOString(),
+          // Heure saisie stockée comme de l'UTC (voir parseDateTimeAsUtc) : l'Accueil
+          // l'affiche dans le fuseau du CHU, il lui faut donc l'instant réel (sinon 9 h
+          // y apparaît 12 h).
+          debut: naifVersInstant(rdv.dateHeureDebut).toISOString(),
           examen,
         }),
       });
@@ -1863,6 +1877,44 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         `Accueil non prévenu du RDV ${rdv.id} (${evenement}) : ${e instanceof Error ? e.message : e}`,
       ),
     );
+  }
+
+  /** Notification de rendez-vous au service demandeur (hors Accueil, voir signalerRdvAccueil). */
+  private async notifierRdvAuDemandeur(
+    evenement: 'FIXE' | 'DEPLACE' | 'ANNULE',
+    rdv: { id: string; patientId: string | null; dateHeureDebut: Date },
+    serviceIdSource: string,
+    examen: string | undefined,
+  ): Promise<void> {
+    const patient = rdv.patientId ? await this.getAccueilPatient(rdv.patientId).catch(() => null) : null;
+    const patientLabel = patient
+      ? [patient.nom, patient.prenom].filter(Boolean).join(' ')
+      : 'le patient';
+    // Heure naïve : composants UTC = heure planifiée.
+    const quand = rdv.dateHeureDebut.toLocaleString('fr-FR', {
+      timeZone: 'UTC',
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    const titre = { FIXE: 'Rendez-vous fixé', DEPLACE: 'Rendez-vous déplacé', ANNULE: 'Rendez-vous annulé' }[evenement];
+    const motif =
+      evenement === 'ANNULE'
+        ? `${titre} — Endoscopie${examen ? ` (${examen})` : ''} pour ${patientLabel}, prévu ${quand}`
+        : `${titre} — Endoscopie${examen ? ` (${examen})` : ''} pour ${patientLabel} : ${quand}`;
+    // Consultation externe : l'Accueil l'apprend par acceuil-back (même événement).
+    await this.notificationService.createNotification({
+      type: `RDV_${evenement}`,
+      motif,
+      patientId: rdv.patientId ?? undefined,
+      entiteRefType: 'rendezVous',
+      entiteRefId: rdv.id,
+      emitter: 'endoscopie-back',
+      emitterName: 'Endoscopie',
+      targetServiceId: serviceIdSource,
+    });
   }
 
   /** Résout patient + type d'examen pour notifier le médecin qu'un rendez-vous vient d'être planifié. */
@@ -2222,6 +2274,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     );
     if (!ext) return;
 
+    // Statut répercuté : prescription_back notifie lui-même le service demandeur.
+    let statutRepercute = false;
     if (prescription.externalId && ext.prescriptionExternalId) {
       try {
         const token =
@@ -2235,6 +2289,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           },
           body: JSON.stringify({ statut: this.EXTERNAL_REFUS_STATUT, motif: motifRefus }),
         });
+        statutRepercute = res.ok;
         if (!res.ok) {
           this.logger.warn(
             `PATCH statut demande externe ${res.status}: ${await res.text().catch(() => '')}`,
@@ -2248,17 +2303,28 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (ext.serviceIdSource) {
+      // Le refus ne va qu'au service qui a envoyé la demande, plus l'Accueil quand c'est
+      // la consultation externe (le patient attend à l'Accueil). Une seule fois chacun :
+      // le service demandeur est déjà prévenu par prescription_back si le statut y est passé.
+      const destinataires = [
+        ...(statutRepercute ? [] : [ext.serviceIdSource]),
+        ...(origineDemande(ext.serviceIdSource) === 'CONSULTATION_EXTERNE'
+          ? [accueilDuChuDe(ext.serviceIdSource)].filter((x): x is string => !!x)
+          : []),
+      ];
       const patientLabel = ext.patientId ? `patient ${ext.patientId}` : 'un patient';
-      await this.notificationService.createNotification({
-        type: 'DEMANDE_EXAMEN_REFUSEE',
-        motif: `Demande d'examen (${ext.typeExamen}) refusée par Endoscopie pour ${patientLabel} : ${motifRefus}`,
-        patientId: ext.patientId,
-        entiteRefType: 'prescription',
-        entiteRefId: ext.prescriptionExternalId,
-        emitter: 'endoscopie-back',
-        emitterName: 'Endoscopie',
-        targetServiceId: ext.serviceIdSource,
-      });
+      for (const targetServiceId of destinataires) {
+        await this.notificationService.createNotification({
+          type: 'DEMANDE_EXAMEN_REFUSEE',
+          motif: `Demande d'examen (${ext.typeExamen}) refusée par Endoscopie pour ${patientLabel} : ${motifRefus}`,
+          patientId: ext.patientId,
+          entiteRefType: 'prescription',
+          entiteRefId: ext.prescriptionExternalId,
+          emitter: 'endoscopie-back',
+          emitterName: 'Endoscopie',
+          targetServiceId,
+        });
+      }
     }
   }
 
