@@ -60,7 +60,10 @@ export class DossierPatientService {
   private async getList(path: string, extraParams?: Record<string, string>): Promise<unknown[]> {
     const ctx = await this.context();
     if (!ctx) return [];
-    const params = new URLSearchParams({ chuId: ctx.chuId, serviceId: ctx.serviceId, ...extraParams });
+    // Sans serviceId : tout le dossier du patient dans ce CHU. Avec celui d'Endoscopie, le
+    // service ne renvoyait que ce qu'Endoscopie avait saisi — jamais les observations ni
+    // les diagnostics des services qui ont réellement le patient en charge (Clinique…).
+    const params = new URLSearchParams({ chuId: ctx.chuId, ...extraParams });
     try {
       const res = await fetch(`${ctx.baseUrl}${path}?${params}`, {
         headers: this.headers(ctx.token),
