@@ -137,7 +137,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
    *  prescription. */
   private seenExternalPrescriptionIds: Set<string> | null = null;
   private prescriptionWatcherInterval: ReturnType<typeof setInterval> | null = null;
-  private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 3000;
+  // 30 s (était 3 s : 20 requêtes/min à elle seule). Toutes les interrogations passent par la passerelle, que le pare-feu de
+  // l'hébergeur (Cloudflare) bloque au-delà d'un certain débit (429).
+  private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 30_000;
   private isPollingPrescriptions = false;
 
   constructor(
