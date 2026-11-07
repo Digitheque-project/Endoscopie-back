@@ -1376,6 +1376,31 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Rendez-vous enrichis : médecin du rendez-vous, médecin PRESCRIPTEUR de la
+   * prescription liée (comme le Fil de prescription — le médecin du rendez-vous
+   * n'est le plus souvent pas encore assigné) et patient.
+   */
+  private async avecMedecinsEtPatients<R extends { prescription: { id: string; medecinId: string } | null; patientId?: string | null }>(rendezVous: R[]) {
+    const prescriptions = rendezVous
+      .map((r) => r.prescription)
+      .filter((p): p is NonNullable<R['prescription']> => !!p);
+    const avecPrescripteur = await this.medecinsService.attachPrescripteurs(
+      prescriptions,
+      'medecinId',
+      'medecinPrescripteur',
+    );
+    const parId = new Map(avecPrescripteur.map((p) => [p.id, p]));
+    const withMedecin = await this.medecinsService.attachMedecins(
+      rendezVous.map((r) =>
+        r.prescription ? { ...r, prescription: parId.get(r.prescription.id) ?? r.prescription } : r,
+      ),
+      'medecinId' as never,
+      'medecin',
+    );
+    return this.attachPatients(withMedecin);
+  }
+
   async getRendezVous(serviceIdOverride?: string) {
     const rendezVous = await this.prisma.rendezVous.findMany({
       where: this.scope(serviceIdOverride),
@@ -1391,12 +1416,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         dateHeureDebut: 'asc',
       },
     });
-    const withMedecin = await this.medecinsService.attachMedecins(
-      rendezVous,
-      'medecinId',
-      'medecin',
-    );
-    return this.attachPatients(withMedecin);
+    return this.avecMedecinsEtPatients(rendezVous);
   }
 
   async getRendezVousJour(date: string, serviceIdOverride?: string) {
@@ -1425,12 +1445,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         dateHeureDebut: 'asc',
       },
     });
-    const withMedecin = await this.medecinsService.attachMedecins(
-      rendezVous,
-      'medecinId',
-      'medecin',
-    );
-    return this.attachPatients(withMedecin);
+    return this.avecMedecinsEtPatients(rendezVous);
   }
 
   async getProcedureCountsToday(serviceIdOverride?: string) {
