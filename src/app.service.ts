@@ -1206,12 +1206,21 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     if (!patientId) return;
 
     let dateExamenSouhaitee: string | null = null;
+    // Urgence réelle de la prescription, sur l'échelle du Bloc (1-2 normal, 3-4
+    // urgent, 5 très urgent) : un « 4 » fixe rendait toute demande urgente au Bloc.
+    let urgence = 1;
     if (data.prescriptionId) {
       const rdv = await this.prisma.rendezVous.findFirst({
         where: { prescriptionId: data.prescriptionId },
         select: { dateHeureDebut: true },
       });
       if (rdv) dateExamenSouhaitee = rdv.dateHeureDebut.toISOString();
+      const prescription = await this.prisma.prescription.findFirst({
+        where: { OR: [{ id: data.prescriptionId }, { externalId: data.prescriptionId }] },
+        select: { priorite: true },
+      });
+      const p = (prescription?.priorite ?? '').trim().toUpperCase();
+      urgence = p === 'STAT' || p === 'TRES_URGENT' ? 5 : p === 'URGENT' || p === 'URGENTE' ? 3 : 1;
     }
 
     const payload = {
@@ -1223,7 +1232,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       sourceReferenceId: dossier.id,
       typeAnesthesie: dossier.typeAnesthesie ?? 'Générale',
       motif: dossier.observations ?? '',
-      urgence: 4,
+      urgence,
       ...(dateExamenSouhaitee && { dateExamenSouhaitee }),
     };
 
@@ -2267,6 +2276,64 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   private readonly EXTERNAL_REFUS_STATUT = 'REFUSEE';
 
   /**
+   * Compte-rendu enregistré : statut « RESULTAT_DISPONIBLE » répercuté au service
+   * prescription (source de vérité), qui prévient lui-même le service demandeur ;
+   * repli sur une notification directe si la répercussion échoue. L'Accueil est
+   * aussi prévenu quand le patient vient de la consultation externe.
+   */
+  private async notifierResultatDisponible(prescriptionId: string, serviceId: string) {
+    const { prescription, ext } = await this.ensurePrescriptionAnchor(prescriptionId, serviceId);
+    if (!ext) return;
+
+    let statutRepercute = false;
+    if (prescription.externalId && ext.prescriptionExternalId) {
+      try {
+        const token =
+          getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+        const url = `${getPrescriptionExtApiUrl()}/endoscopie/${ext.prescriptionExternalId}/demandes/${prescription.externalId}/statut`;
+        const res = await fetch(url, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token && { Authorization: `Bearer ${token}` }),
+          },
+          body: JSON.stringify({ statut: 'RESULTAT_DISPONIBLE' }),
+        });
+        statutRepercute = res.ok;
+        if (!res.ok) {
+          this.logger.warn(
+            `PATCH statut RESULTAT_DISPONIBLE ${res.status}: ${await res.text().catch(() => '')}`,
+          );
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Échec MAJ statut externe (résultat) pour la demande ${prescription.externalId}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
+
+    if (!ext.serviceIdSource) return;
+    const destinataires = [
+      ...(statutRepercute ? [] : [ext.serviceIdSource]),
+      ...(origineDemande(ext.serviceIdSource) === 'CONSULTATION_EXTERNE'
+        ? [accueilDuChuDe(ext.serviceIdSource)].filter((x): x is string => !!x)
+        : []),
+    ];
+    for (const targetServiceId of destinataires) {
+      await this.notificationService.createNotification({
+        type: 'RESULTAT_DISPONIBLE',
+        motif: `Le compte-rendu de l'examen d'endoscopie (${ext.typeExamen}) est disponible.`,
+        patientId: ext.patientId,
+        entiteRefType: 'prescription',
+        entiteRefId: ext.prescriptionExternalId,
+        emitter: 'endoscopie-back',
+        emitterName: 'Endoscopie',
+        targetServiceId,
+      });
+    }
+  }
+
+  /**
    * Répercute le refus d'une demande d'examen vers le service prescription externe
    * (source de vérité) et notifie le service qui a émis la demande (celui qui a le
    * patient en charge) — cf. plan de la fonctionnalité "refus d'examen". Best-effort :
@@ -2588,6 +2655,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         data: { statut: 'Terminé' },
       });
     }
+
+    // Le service demandeur (et l'Accueil pour la consultation externe) est
+    // prévenu que le compte-rendu est disponible — même voie que le refus.
+    await this.notifierResultatDisponible(prescriptionId, prescription.serviceId).catch((e) =>
+      this.logger.warn(`Notification « résultat disponible » échouée pour ${prescriptionId}: ${e instanceof Error ? e.message : e}`),
+    );
 
     // Notifier les services sources que le résultat est prêt
     try {
