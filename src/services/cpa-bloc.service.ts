@@ -54,6 +54,37 @@ export class CpaBlocService {
     private medecinsService: MedecinsService,
   ) {}
 
+  /**
+   * État complet de la demande côté Bloc (statut, dates planifiées, décision, motif
+   * d'inaptitude/report, observations), lu en direct pour l'affichage de la CPA —
+   * rien n'est stocké. null si le dossier n'a pas été transmis ou si le Bloc ne répond pas.
+   */
+  async lireEtatBloc(blocDemandeId: string | null | undefined): Promise<Record<string, unknown> | null> {
+    const blocUrl = getBlocApiUrl();
+    if (!blocDemandeId || !blocUrl) return null;
+    try {
+      const token = getCurrentUserToken() ?? (await this.medecinsService.getServiceAccountToken());
+      const res = await fetch(`${blocUrl}/demandes-cpa-externes/${blocDemandeId}/statut`, {
+        signal: AbortSignal.timeout(8000),
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) return null;
+      const remote = (await res.json()) as Record<string, unknown>;
+      const cpa = (remote['cpa'] as Record<string, unknown>) ?? remote;
+      return {
+        statut: remote['statut'] ?? null,
+        dateCpaPlanifiee: remote['dateCpaPlanifiee'] ?? null,
+        dateVpaPlanifiee: remote['dateVpaPlanifiee'] ?? null,
+        decision: cpa['decision'] ?? cpa['decisionCpa'] ?? null,
+        dateCpa: cpa['dateCpa'] ?? null,
+        observations: cpa['observations'] ?? null,
+        motifRefus: cpa['motifRefus'] ?? remote['motifRefus'] ?? null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async synchroniserDepuisBloc(dossierId: string): Promise<CpaBlocSyncResult> {
     const dossier = await this.prisma.dossierCPA.findUnique({
       where: { id: dossierId },

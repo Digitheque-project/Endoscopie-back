@@ -1097,12 +1097,12 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     if (!dossier) {
       throw new NotFoundException(`Dossier CPA ${id} introuvable`);
     }
-    const withMedecin = await this.medecinsService.attachMedecin(
-      dossier,
-      'anesthesisteId',
-      'anesthesiste',
-    );
-    return this.attachPatient(withMedecin);
+    const [withMedecin, bloc] = await Promise.all([
+      this.medecinsService.attachMedecin(dossier, 'anesthesisteId', 'anesthesiste'),
+      // Tout ce que le Bloc a saisi (dates planifiées, motif d'inaptitude/report…).
+      this.cpaBlocService.lireEtatBloc(dossier.blocDemandeId),
+    ]);
+    return this.attachPatient({ ...withMedecin, bloc });
   }
 
   async getDossierCpaByPrescriptionId(
@@ -2475,7 +2475,8 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
           ? [accueilDuChuDe(ext.serviceIdSource)].filter((x): x is string => !!x)
           : []),
       ];
-      const patientLabel = ext.patientId ? `patient ${ext.patientId}` : 'un patient';
+      const accueil = ext.patientId ? await this.getAccueilPatient(ext.patientId).catch(() => null) : null;
+      const patientLabel = accueil ? [accueil.nom, accueil.prenom].filter(Boolean).join(' ') : 'le patient';
       for (const targetServiceId of destinataires) {
         await this.notificationService.createNotification({
           type: 'DEMANDE_EXAMEN_REFUSEE',
