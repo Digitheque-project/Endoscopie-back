@@ -153,6 +153,14 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit() {
+    // CPA / vérification veille planifiée par le Bloc : le service source du patient
+    // apprend la date pour pouvoir prévenir le patient.
+    this.notificationInboxService.planificationsBloc$.subscribe(({ type, dossierId, payload }) => {
+      void this.relayerPlanificationBloc(type, dossierId, payload).catch((e) =>
+        this.logger.warn(`Relais planification Bloc échoué (${dossierId}): ${e instanceof Error ? e.message : e}`),
+      );
+    });
+
     // Amorce la liste des demandes déjà notifiées depuis la table persistée
     // NotifiedPrescription — contrairement à un simple Set en mémoire (perdu à chaque
     // redémarrage), ceci survit aux redémarrages à froid fréquents sur Render (offre
@@ -1157,6 +1165,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     });
 
     if (data.prescriptionId) {
+      void this.notifierServiceSource(data.prescriptionId, serviceId, 'CPA_DEMANDEE', (patient, examen) =>
+        `Consultation pré-anesthésique (CPA) demandée au Bloc pour ${patient}, avant son examen d'endoscopie (${examen}). La date vous sera communiquée.`,
+      ).catch((e) => this.logger.warn(`Notification « CPA demandée » échouée: ${e instanceof Error ? e.message : e}`));
       await this.prisma.rendezVous.updateMany({
         where: { prescriptionId: data.prescriptionId, serviceId },
         data: { statut: 'CPA demandée' },
@@ -2255,6 +2266,13 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     // Fire-and-forget, comme les autres notifications : jamais bloquant pour la décision.
     const anesthesieDecidee = !!data.typeAnesthesie && !existing.typeAnesthesie;
     const refus = data.statut === 'Annulé' && existing.statut !== 'Annulé';
+    if (existing.prescriptionId && anesthesieDecidee && !refus) {
+      const generale = /g[ée]n[ée]rale/i.test(String(data.typeAnesthesie));
+      void this.notifierServiceSource(existing.prescriptionId, serviceId, 'DECISION_ANESTHESIE', (patient, examen) =>
+        `Décision d'anesthésie — Endoscopie (${examen}) pour ${patient} : anesthésie ${String(data.typeAnesthesie).toLowerCase()}` +
+        (generale ? ". Une consultation pré-anesthésique (CPA) au Bloc est nécessaire avant l'examen." : '.'),
+      ).catch((e) => this.logger.warn(`Notification « décision d'anesthésie » échouée: ${e instanceof Error ? e.message : e}`));
+    }
     if (existing.prescriptionId && (anesthesieDecidee || refus)) {
       const prescriptionId = existing.prescriptionId;
       void (async () => {
@@ -2281,6 +2299,60 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
       'medecin',
     );
     return this.attachPatient(withMedecin);
+  }
+
+  /**
+   * Prévient le service SOURCE de la prescription (celui qui a le patient en charge),
+   * et l'Accueil quand le patient vient de la consultation externe. Best-effort.
+   */
+  private async notifierServiceSource(
+    prescriptionId: string,
+    serviceId: string | undefined,
+    type: string,
+    motif: (patient: string, examen: string) => string,
+  ): Promise<void> {
+    const { ext } = await this.ensurePrescriptionAnchor(prescriptionId, serviceId);
+    if (!ext?.serviceIdSource) return;
+    const patient = ext.patientId ? await this.getAccueilPatient(ext.patientId).catch(() => null) : null;
+    const nomPatient = patient ? [patient.nom, patient.prenom].filter(Boolean).join(' ') : 'le patient';
+    const texte = motif(nomPatient, ext.typeExamen || 'endoscopie');
+    const destinataires = new Set<string>([
+      ext.serviceIdSource,
+      ...(origineDemande(ext.serviceIdSource) === 'CONSULTATION_EXTERNE'
+        ? [accueilDuChuDe(ext.serviceIdSource)].filter((x): x is string => !!x)
+        : []),
+    ]);
+    for (const targetServiceId of destinataires) {
+      await this.notificationService.createNotification({
+        type,
+        motif: texte,
+        patientId: ext.patientId,
+        entiteRefType: 'prescription',
+        entiteRefId: ext.prescriptionExternalId,
+        emitter: 'endoscopie-back',
+        emitterName: 'Endoscopie',
+        targetServiceId,
+      });
+    }
+  }
+
+  /** CPA / vérification veille planifiée par le Bloc : date transmise au service source. */
+  private async relayerPlanificationBloc(type: string, dossierId: string, payload: Record<string, unknown>) {
+    const dossier = await this.prisma.dossierCPA.findUnique({
+      where: { id: dossierId },
+      select: { prescriptionId: true, serviceId: true },
+    });
+    if (!dossier?.prescriptionId) return;
+    const jour = typeof payload.date === 'string' && payload.date
+      ? new Date(`${payload.date.slice(0, 10)}T00:00:00Z`).toLocaleDateString('fr-FR', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' })
+      : '';
+    const heure = typeof payload.heureDebut === 'string' ? payload.heureDebut.slice(0, 5) : '';
+    const salle = typeof payload.salle === 'string' ? payload.salle : '';
+    const quand = [jour && `le ${jour}`, heure && `à ${heure}`, salle && `(${salle})`].filter(Boolean).join(' ');
+    const quoi = type === 'VPA_PLANIFIEE' ? 'Vérification pré-anesthésique (veille)' : 'Consultation pré-anesthésique (CPA)';
+    await this.notifierServiceSource(dossier.prescriptionId, dossier.serviceId, type, (patient, examen) =>
+      `${quoi} de ${patient} planifiée au Bloc${quand ? ` ${quand}` : ''} — avant son examen d'endoscopie (${examen}). Merci de prévenir le patient.`,
+    );
   }
 
   /**

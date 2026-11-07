@@ -9,7 +9,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CpaBlocService } from '../services/cpa-bloc.service';
 
 /** Types envoyés par le Bloc Opératoire — pas filtrés par serviceId */
-const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE']);
+const BLOC_NOTIFICATION_TYPES = new Set(['CPA_RESULTAT', 'VPA_REALISEE', 'CPA_PLANIFIEE', 'VPA_PLANIFIEE']);
+/** Planification d'une CPA / vérification veille par le Bloc (date à transmettre au service source). */
+const BLOC_PLANIFICATION_TYPES = new Set(['CPA_PLANIFIEE', 'VPA_PLANIFIEE']);
 
 const MAX_INBOX = 200;
 
@@ -21,6 +23,8 @@ export class NotificationInboxService {
   private readonly logger = new Logger(NotificationInboxService.name);
   private readonly items: InboxNotification[] = [];
   private readonly events$ = new Subject<InboxNotification>();
+  /** CPA (ou vérification veille) planifiée par le Bloc : relayée au service source par AppService. */
+  readonly planificationsBloc$ = new Subject<{ type: string; dossierId: string; payload: Record<string, unknown> }>();
   /** Contenu (type|motif|dossier) -> instant de réception, pour écarter les doublons. */
   private readonly recentContents = new Map<string, number>();
 
@@ -84,8 +88,17 @@ export class NotificationInboxService {
     this.events$.next(item);
     this.logger.log(`Notification reçue [${item.type}] ${item.motif}`);
 
+    // Planification par le Bloc : le service source apprend la date (voir AppService).
+    if (BLOC_PLANIFICATION_TYPES.has(dto.type) && dto.entiteRefId) {
+      this.planificationsBloc$.next({
+        type: dto.type,
+        dossierId: dto.entiteRefId,
+        payload: ((raw.payload ?? {}) as Record<string, unknown>),
+      });
+    }
+
     // Mise à jour automatique du dossier CPA depuis le Bloc Opératoire
-    if (isBlocNotif && dto.entiteRefId) {
+    if (isBlocNotif && dto.entiteRefId && !BLOC_PLANIFICATION_TYPES.has(dto.type)) {
       this.handleBlocNotification(dto).catch((err) =>
         this.logger.error(`Erreur MAJ dossier-cpa [${dto.type}]: ${err}`),
       );
