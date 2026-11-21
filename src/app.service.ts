@@ -38,6 +38,7 @@ import { MedecinsService } from './services/medecins.service';
 import { CpaBlocService } from './services/cpa-bloc.service';
 import { DossierPatientService } from './services/dossier-patient.service';
 import { getCurrentUserToken } from './auth/request-context';
+import { RattrapageStatuts, statutARenvoyer } from './utils/rattrapage-statut';
 
 interface AccueilPatientRaw {
   id: string;
@@ -141,6 +142,7 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
   // l'hébergeur (Cloudflare) bloque au-delà d'un certain débit (429).
   private readonly PRESCRIPTION_WATCH_INTERVAL_MS = 30_000;
   private isPollingPrescriptions = false;
+  private readonly rattrapage = new RattrapageStatuts();
 
   constructor(
     private prisma: PrismaService,
@@ -215,6 +217,9 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
     this.isPollingPrescriptions = true;
     try {
       const current = await this.fetchExternalPrescriptions();
+      await this.rattraperStatuts(current).catch((e) =>
+        this.logger.warn(`Rattrapage des statuts échoué: ${e instanceof Error ? e.message : e}`),
+      );
       const nouvelles = current.filter((p) => p.id && !this.seenExternalPrescriptionIds!.has(p.id));
       if (nouvelles.length === 0) return;
 
@@ -2368,6 +2373,61 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
    * repli sur une notification directe si la répercussion échoue. L'Accueil est
    * aussi prévenu quand le patient vient de la consultation externe.
    */
+  /**
+   * Rattrapage : un examen terminé (compte rendu) ou refusé ici, dont le service
+   * Prescription n'a pas reçu le statut (envoi échoué), est renvoyé. Un statut
+   * distant final n'est jamais modifié ; les échecs répétés sont espacés.
+   */
+  private async rattraperStatuts(distantes: FlatExternalDemande[]) {
+    const parId = new Map(distantes.filter((d) => d.id).map((d) => [d.id, d]));
+    if (!parId.size) return;
+    const locales = await this.prisma.prescription.findMany({
+      where: { externalId: { in: [...parId.keys()] }, statut: { in: ['Terminé', 'Annulé'] } },
+      select: { externalId: true, prescriptionExternalId: true, statut: true, motifRefus: true },
+    });
+    let token: string | null | undefined;
+    for (const l of locales) {
+      const d = l.externalId ? parId.get(l.externalId) : undefined;
+      if (!d || !l.externalId) continue;
+      const voulu = l.statut === 'Terminé' ? 'RESULTAT_DISPONIBLE' : this.EXTERNAL_REFUS_STATUT;
+      const statut = statutARenvoyer(voulu, d.statut, [], [
+        'RESULTAT_DISPONIBLE',
+        'REFUSEE',
+        'ANNULEE',
+        'TERMINEE',
+        'REALISEE',
+      ]);
+      if (!statut) continue;
+      const parent = l.prescriptionExternalId || d.prescriptionExternalId;
+      if (!parent) continue;
+      const cle = `${l.externalId}:${statut}`;
+      if (!this.rattrapage.peutTenter(cle)) continue;
+      if (token === undefined) token = await this.medecinsService.getServiceAccountToken();
+      let ok = false;
+      try {
+        const res = await fetch(
+          `${getPrescriptionExtApiUrl()}/endoscopie/${parent}/demandes/${l.externalId}/statut`,
+          {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token && { Authorization: `Bearer ${token}` }),
+            },
+            body: JSON.stringify({
+              statut,
+              ...(statut === this.EXTERNAL_REFUS_STATUT ? { motif: l.motifRefus || 'Refusé' } : {}),
+            }),
+          },
+        );
+        ok = res.ok;
+      } catch {
+        ok = false;
+      }
+      this.rattrapage.resultat(cle, ok);
+      if (ok) this.logger.log(`Rattrapage : statut ${statut} renvoyé pour la demande ${l.externalId}`);
+    }
+  }
+
   private async notifierResultatDisponible(prescriptionId: string, serviceId: string) {
     const { prescription, ext } = await this.ensurePrescriptionAnchor(prescriptionId, serviceId);
     if (!ext) return;
