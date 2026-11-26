@@ -2466,10 +2466,15 @@ export class AppService implements OnModuleInit, OnModuleDestroy {
         ? [accueilDuChuDe(ext.serviceIdSource)].filter((x): x is string => !!x)
         : []),
     ];
+    // Nom du patient dans le message (avant : aucun patient cité).
+    const patientRes = ext.patientId ? await this.getAccueilPatient(ext.patientId).catch(() => null) : null;
+    const nomPatientRes = patientRes ? [patientRes.nom, patientRes.prenom].filter(Boolean).join(' ').trim() : '';
     for (const targetServiceId of destinataires) {
       await this.notificationService.createNotification({
         type: 'RESULTAT_DISPONIBLE',
-        motif: `Le compte-rendu de l'examen d'endoscopie (${ext.typeExamen}) est disponible.`,
+        motif: nomPatientRes
+          ? `${nomPatientRes} : le compte-rendu de l'examen d'endoscopie (${ext.typeExamen}) est disponible.`
+          : `Le compte-rendu de l'examen d'endoscopie (${ext.typeExamen}) est disponible.`,
         patientId: ext.patientId,
         entiteRefType: 'prescription',
         entiteRefId: ext.prescriptionExternalId,

@@ -197,10 +197,10 @@ export class NotificationService {
     if (!primary) return null;
 
     const patientName = primary.patient
-      ? `${primary.patient.prenom} ${primary.patient.nom}`.trim()
+      ? [primary.patient.prenom, primary.patient.nom].filter((x) => x && x !== "undefined").join(" ") || "Patient"
       : 'Patient';
     const medecinName = primary.medecinPrescripteur
-      ? `Dr. ${primary.medecinPrescripteur.prenom} ${primary.medecinPrescripteur.nom}`.trim()
+      ? `Dr. ${[primary.medecinPrescripteur.prenom, primary.medecinPrescripteur.nom].filter(Boolean).join(" ")}`.trim()
       : 'Médecin';
     const typeExamenLabel = list.map((p) => p.typeExamen).join(' + ');
 
@@ -211,7 +211,7 @@ export class NotificationService {
     return this.createNotification({
       localSeulement: true,
       type: 'DEMANDE_EXAMEN',
-      motif: `Nouvelle prescription endoscopie — ${typeExamenLabel}`,
+      motif: `Nouvelle prescription endoscopie — ${typeExamenLabel} (${patientName})`,
       urgence: 3,
       emitter: getEndoscopieAuthServiceId() ?? getEndoscopieServiceId(),
       emitterName: 'Unité Endoscopie',
