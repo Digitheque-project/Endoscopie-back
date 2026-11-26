@@ -252,7 +252,7 @@ export class NotificationService {
     patient?: { nom: string; prenom: string } | null;
   }): Promise<unknown | null> {
     const patientName = rdv.patient
-      ? `${rdv.patient.prenom} ${rdv.patient.nom}`.trim()
+      ? [rdv.patient.prenom, rdv.patient.nom].filter((x) => x && x !== "undefined").join(" ") || "Patient"
       : 'Patient';
     const typeExamenLabel = rdv.typeExamen || 'Examen';
 
@@ -293,7 +293,7 @@ export class NotificationService {
     refus?: string | null;
   }): Promise<unknown | null> {
     const patientName = decision.patient
-      ? `${decision.patient.prenom} ${decision.patient.nom}`.trim()
+      ? [decision.patient.prenom, decision.patient.nom].filter((x) => x && x !== "undefined").join(" ") || "Patient"
       : 'Patient';
     const typeExamenLabel = decision.typeExamen || 'Examen';
     const detail = decision.refus
